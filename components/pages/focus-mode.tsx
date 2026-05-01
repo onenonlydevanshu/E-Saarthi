@@ -14,10 +14,8 @@ import {
   Sparkles,
   Zap,
   Clock,
-  CheckCircle2,
   BookOpen,
   X,
-  Trophy,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -48,8 +46,6 @@ export function FocusModePage() {
   const [isRunning, setIsRunning] = useState(false)
   const [soundEnabled, setSoundEnabled] = useState(true)
   const [sessionsThisCycle, setSessionsThisCycle] = useState(0)
-  const [showCompletionModal, setShowCompletionModal] = useState(false)
-  const [completedTaskTitle, setCompletedTaskTitle] = useState<string | null>(null)
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
@@ -85,10 +81,9 @@ export function FocusModePage() {
       const newSessions = sessionsThisCycle + 1
       setSessionsThisCycle(newSessions)
 
-      // If there's a focus task, show completion modal
+      // If a task is selected, auto-complete it when the focus session ends.
       if (currentFocusTask) {
-        setCompletedTaskTitle(currentFocusTask.title)
-        setShowCompletionModal(true)
+        completeFocusTask()
       }
 
       if (newSessions >= 4) {
@@ -103,19 +98,15 @@ export function FocusModePage() {
       setMode('focus')
       setTimeLeft(timerSettings.focus.duration)
     }
-  }, [mode, sessionsThisCycle, incrementFocusSessions, addStudyHours, playSound, currentFocusTask])
-
-  const handleMarkComplete = () => {
-    completeFocusTask()
-    setShowCompletionModal(false)
-    setCompletedTaskTitle(null)
-  }
-
-  const handleContinueTask = () => {
-    setShowCompletionModal(false)
-    setCompletedTaskTitle(null)
-    // Keep the task but don't mark complete - user can do another session
-  }
+  }, [
+    mode,
+    sessionsThisCycle,
+    incrementFocusSessions,
+    addStudyHours,
+    playSound,
+    currentFocusTask,
+    completeFocusTask,
+  ])
 
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null
@@ -175,45 +166,6 @@ export function FocusModePage() {
 
   return (
     <div className="min-h-[calc(100vh-8rem)] flex flex-col items-center justify-center p-4 animate-fade-in relative">
-      {/* Completion Modal */}
-      {showCompletionModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-card border border-border rounded-3xl p-8 max-w-md mx-4 shadow-2xl animate-scale-in">
-            <div className="text-center">
-              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-emerald-500/20 to-emerald-500/5 flex items-center justify-center mx-auto mb-5">
-                <Trophy className="w-10 h-10 text-emerald-500" />
-              </div>
-              <h3 className="text-2xl font-bold text-card-foreground mb-2">Session Complete!</h3>
-              {completedTaskTitle && (
-                <p className="text-muted-foreground mb-6">
-                  You focused on: <span className="font-medium text-card-foreground">{completedTaskTitle}</span>
-                </p>
-              )}
-              <p className="text-sm text-muted-foreground mb-6">
-                Did you complete this task?
-              </p>
-              <div className="flex gap-3 justify-center">
-                <Button
-                  onClick={handleMarkComplete}
-                  className="gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  Yes, Mark Complete
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleContinueTask}
-                  className="gap-2 rounded-xl"
-                >
-                  <Clock className="w-4 h-4" />
-                  Need More Time
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="w-full max-w-xl space-y-7 sm:space-y-8">
         {/* Header */}
         <header className="text-center space-y-3 relative">

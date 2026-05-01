@@ -1,134 +1,24 @@
 import { NextRequest } from 'next/server'
 import { getSyllabusById, formatSyllabusForAI, type ExamSyllabus } from '@/lib/syllabus-data'
-import { AGENT_ACTION_SCHEMA } from '@/lib/agent-actions'
+const SYSTEM_PROMPT = `You are an AI exam preparation controller.
 
-const SYSTEM_PROMPT = `You are an expert AI Study Mentor named "PrepMaster" - a highly experienced educator specializing in competitive exam preparation for government and private exams like UPSC, SSC, Bank PO, CAT, GATE, JEE, NEET, and more.
+Return exactly one valid JSON object and nothing else.
 
-You are not just a chatbot - you are a true AGENT that can directly control the entire app. The student's UI updates in real-time based on the actions you emit.
-
-## Your Personality:
-- Warm, encouraging, and supportive like a caring teacher
-- Patient and understanding of student struggles
-- Motivating without being pushy
-- Professional yet friendly
-
-## ADAPTIVE LEARNING CONTEXT:
-You have access to the student's performance data. Use this to personalize your responses:
-- Focus more on their weak subjects
-- Acknowledge their strengths
-- Adjust difficulty based on their accuracy
-- Consider their task completion patterns
-
-## AGENT ACTIONS (CRITICAL - HOW YOU CONTROL THE UI):
-
-At the END of your response, you MUST emit a JSON array of actions inside an [AGENT_ACTIONS]...[/AGENT_ACTIONS] block whenever your reply implies a UI change. The client parses this block, executes each action against the app store, and the UI updates instantly.
-
-${AGENT_ACTION_SCHEMA}
-
-### Rules for emitting actions:
-- ALWAYS emit actions when the user asks you to do something (e.g. "add a task", "start focus", "go to mock tests").
-- ALWAYS emit "add_study_plan" when you generate a study plan - DO NOT make the user click extra buttons.
-- ALWAYS emit "add_tasks" when you generate daily tasks.
-- ALWAYS emit "start_focus" when the user asks to focus on a specific topic.
-- Emit "navigate" to take the user to a relevant page (e.g. show them the planner after adding a plan).
-- Emit "show_focus_prompt" when the student is distracted/overwhelmed but hasn't asked to start focus yet.
-- Combine multiple actions in one block, e.g. add a study plan AND navigate to the planner.
-- The [AGENT_ACTIONS] block is REQUIRED - never skip it when actions apply.
-- Keep emitting [STUDY_PLAN] and [DAILY_TASKS] blocks too (they power the preview cards), but ALSO emit the equivalent agent actions.
-
-### Example: User asks "Create a 7-day plan for SSC"
-Each schedule entry MUST include "day", "date" (ISO YYYY-MM-DD, starting tomorrow), "topics" (array), and "hours". The "date" field is required - the UI will not render days without it.
-
-[AGENT_ACTIONS]
-[
-  {"type": "add_study_plan", "examName": "SSC CGL", "examDate": "2026-06-15", "hoursPerDay": 6, "schedule": [{"day": 1, "date": "2026-05-01", "topics": ["Quant - Fundamentals"], "hours": 6}, {"day": 2, "date": "2026-05-02", "topics": ["English Grammar"], "hours": 6}]},
-  {"type": "navigate", "page": "study-planner"}
-]
-[/AGENT_ACTIONS]
-
-### Example: User says "I can't focus, help"
-[AGENT_ACTIONS]
-[{"type": "show_focus_prompt"}]
-[/AGENT_ACTIONS]
-
-### Example: User says "Start focusing on algebra"
-[AGENT_ACTIONS]
-[{"type": "start_focus", "taskTitle": "Algebra - Deep Practice"}]
-[/AGENT_ACTIONS]
-
-## Your Capabilities:
-
-### 1. Adaptive Study Plan Generation
-When creating study plans, consider the student's performance data:
-- Allocate MORE time to weak subjects (lower accuracy)
-- Include maintenance practice for strong subjects
-- Adjust based on task completion rate
-
-Format study plans like this:
-[STUDY_PLAN]
+Required shape:
 {
-  "examName": "Exam Name Here",
-  "examDate": "YYYY-MM-DD",
-  "hoursPerDay": 6,
-  "schedule": [
-    {"day": 1, "date": "YYYY-MM-DD", "topics": ["Weak Subject - Fundamentals", "Strong Subject - Advanced"], "hours": 6, "priority": "high"},
-    {"day": 2, "date": "YYYY-MM-DD", "topics": ["Weak Subject - Practice", "Mixed Review"], "hours": 6, "priority": "medium"}
-  ],
-  "adaptive": true,
-  "focusAreas": ["Subject 1", "Subject 2"]
+  "action": "create_plan" | "add_tasks" | "start_focus" | "update_progress" | "ask_question",
+  "message": "plain text only",
+  "data": {}
 }
-[/STUDY_PLAN]
 
-### 2. Adaptive Daily Task Generation
-When suggesting daily tasks, prioritize based on:
-- Weak subjects need more attention (60% of tasks)
-- Strong subjects for confidence (20% of tasks)
-- New topics for growth (20% of tasks)
-
-Format tasks like this:
-[DAILY_TASKS]
-["[PRIORITY] Task for weak area", "[PRACTICE] Task for strong area", "[NEW] Exploration task"]
-[/DAILY_TASKS]
-
-Include priority tags: [PRIORITY], [PRACTICE], [REVISION], [NEW], [CHALLENGE]
-
-### 3. Performance-Based Recommendations
-Always acknowledge the student's:
-- Strong areas (celebrate wins!)
-- Areas needing improvement (be constructive)
-- Recent progress (consistency matters)
-
-### 4. Exam Guidance
-- Provide subject-wise breakdowns and weightage
-- Share exam patterns, important topics, and strategies
-- Give time management tips for exam day
-- Recommend quality resources and books
-
-### 5. Concept Explanation
-- Break down complex topics into simple, digestible parts
-- Use analogies and real-world examples
-- Provide memory techniques and mnemonics
-- Connect concepts to exam relevance
-
-### 6. Motivation & Mental Health
-- Address exam anxiety and stress
-- Provide productivity tips
-- Help with procrastination (suggest Focus Mode with Pomodoro timer)
-- Celebrate progress and encourage consistency
-
-## Guidelines:
-- Keep responses conversational but informative
-- Use bullet points and formatting for clarity
-- Ask clarifying questions when needed
-- Always reference performance data when available
-- If discussing focus or distraction, recommend the Focus Mode feature
-- Provide actionable advice, not just theory
-
-## Response Format:
-- Use markdown formatting (bold, bullet points, numbered lists)
-- Keep responses focused and not overly long
-- Include specific examples when explaining concepts
-- End responses with a question or next step when appropriate`
+Rules:
+- Do not use markdown.
+- Do not use code blocks.
+- Do not add any text before or after the JSON.
+- Always include action, message, and data.
+- Keep message concise and user-facing.
+- Use data.plan for study plans, data.tasks for daily tasks, data.taskTitle for focus, and data.progress for performance summaries.
+`
 
 // Keywords for different intents
 const FOCUS_KEYWORDS = ['distract', 'unfocus', 'focus', 'concentrate', 'procrastinat', 'attention', 'overwhelm', 'pomodoro', 'timer', 'motivation', 'stressed', 'anxious']
@@ -143,6 +33,12 @@ interface PerformanceData {
   taskCompletionRate: number
   studyConsistency: number
   recentQuizScores?: { subject: string; score: number }[]
+}
+
+interface MemoryContext {
+  recentCompletedTasks?: string[]
+  recentQuizScores?: Array<{ examName: string; scorePercent: number; date: string }>
+  recommendationHistory?: string[]
 }
 
 function detectIntent(message: string): { focus: boolean; studyPlan: boolean; dailyTasks: boolean; performance: boolean } {
@@ -190,7 +86,10 @@ function generateAdaptiveStudyPlan(performanceData: PerformanceData, examName: s
   }, null, 2)
 }
 
-function generateAdaptiveTasks(performanceData: PerformanceData): string[] {
+function generateAdaptiveTasks(
+  performanceData: PerformanceData,
+  memoryContext?: MemoryContext
+): string[] {
   const { weakAreas, strongAreas, overallAccuracy } = performanceData
   
   const tasks: string[] = []
@@ -221,7 +120,13 @@ function generateAdaptiveTasks(performanceData: PerformanceData): string[] {
     tasks.push('[NEW] Explore optional topics for bonus marks')
   }
   
-  return tasks
+  const recentlyCompleted = new Set(
+    (memoryContext?.recentCompletedTasks || []).map((t) => t.toLowerCase().trim())
+  )
+  const filtered = tasks.filter(
+    (task) => !recentlyCompleted.has(task.toLowerCase().trim())
+  )
+  return (filtered.length > 0 ? filtered : tasks).slice(0, 6)
 }
 
 // Helper to render an [AGENT_ACTIONS] block from any list of actions
@@ -230,8 +135,80 @@ function buildAgentActionsBlock(actions: Array<Record<string, unknown>>): string
   return `\n\n[AGENT_ACTIONS]\n${JSON.stringify(actions, null, 2)}\n[/AGENT_ACTIONS]`
 }
 
+function safeJsonParse<T>(value: string): T | null {
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return null
+  }
+}
+
+function buildStructuredResponse(
+  action: 'create_plan' | 'add_tasks' | 'start_focus' | 'update_progress' | 'ask_question',
+  message: string,
+  data: Record<string, unknown> = {}
+): string {
+  return JSON.stringify({ action, message, data })
+}
+
+function stripControllerBlocks(content: string): string {
+  return content
+    .replace(/\[AGENT_ACTIONS\][\s\S]*?\[\/AGENT_ACTIONS\]/g, '')
+    .replace(/\[STUDY_PLAN\][\s\S]*?\[\/STUDY_PLAN\]/g, '')
+    .replace(/\[DAILY_TASKS\][\s\S]*?\[\/DAILY_TASKS\]/g, '')
+    .trim()
+}
+
+function buildChatControllerBlock(rawResponse: string): string {
+  const actionMatch = rawResponse.match(/\[AGENT_ACTIONS\]([\s\S]*?)\[\/AGENT_ACTIONS\]/)
+  const studyPlanMatch = rawResponse.match(/\[STUDY_PLAN\]([\s\S]*?)\[\/STUDY_PLAN\]/)
+  const dailyTasksMatch = rawResponse.match(/\[DAILY_TASKS\]([\s\S]*?)\[\/DAILY_TASKS\]/)
+
+  const actions = actionMatch ? safeJsonParse<Array<Record<string, unknown>>>(actionMatch[1].trim()) ?? [] : []
+  const studyPlan = studyPlanMatch ? safeJsonParse<Record<string, unknown>>(studyPlanMatch[1].trim()) : undefined
+  const dailyTasks = dailyTasksMatch ? safeJsonParse<string[]>(dailyTasksMatch[1].trim()) : undefined
+  const message = stripControllerBlocks(rawResponse)
+  const primaryAction = studyPlan
+    ? 'create_plan'
+    : dailyTasks && dailyTasks.length > 0
+      ? 'add_tasks'
+      : actions.some((a) => a.type === 'start_focus')
+        ? 'start_focus'
+        : 'none'
+  const focusAction = actions.find((a) => a.type === 'start_focus') as
+    | { type: 'start_focus'; taskTitle?: string }
+    | undefined
+
+  return `\n\n[CHAT_CONTROLLER]\n${JSON.stringify(
+    {
+      message,
+      action: primaryAction,
+      data: {
+        ...(studyPlan ? { plan: studyPlan } : {}),
+        ...(dailyTasks ? { tasks: dailyTasks } : {}),
+        ...(focusAction?.taskTitle ? { taskTitle: focusAction.taskTitle } : {}),
+        // Legacy keys retained for compatibility with older clients
+        ...(studyPlan ? { studyPlan } : {}),
+        ...(dailyTasks ? { dailyTasks } : {}),
+      },
+      actions,
+    },
+    null,
+    2
+  )}\n[/CHAT_CONTROLLER]`
+}
+
+function withControllerBlock(rawResponse: string): string {
+  return `${rawResponse}${buildChatControllerBlock(rawResponse)}`
+}
+
 // Enhanced mock responses with adaptive learning and syllabus
-function getMockResponse(message: string, performanceData?: PerformanceData, syllabus?: ExamSyllabus | null): { 
+function getMockResponse(
+  message: string,
+  performanceData?: PerformanceData,
+  syllabus?: ExamSyllabus | null,
+  memoryContext?: MemoryContext
+): {
   response: string
   intent: { focus: boolean; studyPlan: boolean; dailyTasks: boolean; performance: boolean } 
 } {
@@ -253,81 +230,40 @@ function getMockResponse(message: string, performanceData?: PerformanceData, syl
   
   if (intent.performance) {
     return {
-      response: `## Your Performance Analysis
-
-I've analyzed your study data and here's what I found:
-
-### Overall Statistics
-- **Quiz Accuracy**: ${perfData.overallAccuracy}% 
-- **Task Completion Rate**: ${perfData.taskCompletionRate}%
-- **Study Consistency**: ${perfData.studyConsistency}%
-
-### Strengths (Keep it up!)
-${perfData.strongAreas.map(s => `- **${s}** - You're performing well here!`).join('\n')}
-
-### Areas for Improvement
-${perfData.weakAreas.map(s => `- **${s}** - Needs more focused practice`).join('\n')}
-
-### My Recommendations
-
-Based on your performance, here's what I suggest:
-
-1. **Allocate 60% study time to weak areas** - Focus on ${perfData.weakAreas.join(' and ')}
-2. **Use spaced repetition** - Review weak topics every 2-3 days
-3. **Take targeted mock tests** - Focus on sections where you score below 70%
-4. **Maintain your strengths** - Quick 15-min daily practice for ${perfData.strongAreas[0]}
-
-${perfData.overallAccuracy < 70 
-  ? '\n**Note**: Your accuracy is below target. I recommend going back to basics and building a stronger foundation before attempting advanced questions.'
-  : perfData.overallAccuracy > 85 
-    ? '\n**Excellent Progress!** You\'re doing great! Time to challenge yourself with harder questions and full-length mock tests.'
-    : '\n**Good Progress!** You\'re on the right track. Focus on consistency and you\'ll see improvement soon.'}
-
-Would you like me to create an adaptive study plan based on this analysis?
-
-[ACTION:add-task:Practice ${perfData.weakAreas[0] || 'weak subject'} for 1 hour] [ACTION:focus:${perfData.weakAreas[0] || 'Study'} - Improvement Session]${buildAgentActionsBlock([
-        { type: 'navigate', page: 'progress-tracker' },
+      response: buildStructuredResponse(
+        'update_progress',
+        `Your progress is ready. Accuracy is ${perfData.overallAccuracy}%, task completion is ${perfData.taskCompletionRate}%, and the main focus areas are ${perfData.weakAreas.join(', ')}.`,
         {
-          type: 'add_task',
-          title: `Practice ${perfData.weakAreas[0] || 'weak subject'} for 1 hour`,
-        },
-      ])}`,
+          progress: {
+            overallAccuracy: perfData.overallAccuracy,
+            taskCompletionRate: perfData.taskCompletionRate,
+            studyConsistency: perfData.studyConsistency,
+            weakAreas: perfData.weakAreas,
+            strongAreas: perfData.strongAreas,
+          },
+          tasks: [
+            `Practice ${perfData.weakAreas[0] || 'weak subject'} for 1 hour`,
+          ],
+          taskTitle: `${perfData.weakAreas[0] || 'Study'} - Improvement Session`,
+        }
+      ),
       intent
     }
   }
   
   if (intent.dailyTasks) {
-    const adaptiveTasks = generateAdaptiveTasks(perfData)
+    const adaptiveTasks = generateAdaptiveTasks(perfData, memoryContext)
     const firstTask = adaptiveTasks[0]?.replace(/^\[\w+\]\s*/, '') || 'Start studying'
     
     return {
-      response: `## Your Personalized Study Tasks for Today
-
-Based on your performance data, I've created an **adaptive task list** that focuses on your improvement areas while maintaining your strengths.
-
-**Your Stats Today:**
-- Accuracy: ${perfData.overallAccuracy}% | Weak Areas: ${perfData.weakAreas.join(', ')}
-
-[DAILY_TASKS]
-${JSON.stringify(adaptiveTasks)}
-[/DAILY_TASKS]
-
-### Why These Tasks?
-
-${perfData.weakAreas[0] ? `- **${perfData.weakAreas[0]}** gets priority because your accuracy here needs improvement` : ''}
-${perfData.weakAreas[1] ? `- **${perfData.weakAreas[1]}** is included for balanced improvement` : ''}
-${perfData.strongAreas[0] ? `- **${perfData.strongAreas[0]}** is maintained with lighter practice to keep your edge` : ''}
-
-**Pro Tip**: ${perfData.taskCompletionRate < 70 
-  ? 'I noticed your task completion rate is lower. Try breaking tasks into smaller chunks!'
-  : 'Great task completion rate! Keep up the momentum!'}
-
-Start with the [PRIORITY] tasks when your energy is highest. Ready to begin?
-
-[ACTION:focus:${firstTask}] [ACTION:view:tasks]${buildAgentActionsBlock([
-        { type: 'add_tasks', titles: adaptiveTasks },
-        { type: 'navigate', page: 'daily-tasks' },
-      ])}`,
+      response: buildStructuredResponse(
+        'add_tasks',
+        `I created ${adaptiveTasks.length} tasks for today. Start with ${firstTask}.`,
+        {
+          tasks: adaptiveTasks,
+          taskTitle: firstTask,
+        }
+      ),
       intent
     }
   }
@@ -336,65 +272,17 @@ Start with the [PRIORITY] tasks when your energy is highest. Ready to begin?
     const adaptivePlan = generateAdaptiveStudyPlan(perfData, syllabus?.examName || examName)
     const firstTopic = examSubjects[0]?.topics[0] || perfData.weakAreas[0] || 'Day 1 Topics'
     
-    // Build syllabus-specific content
-    const syllabusInfo = syllabus ? `
-**Selected Exam:** ${syllabus.examName} (${syllabus.shortName})
-**Total Marks:** ${syllabus.totalMarks} | **Duration:** ${syllabus.duration}
-
-**Subjects to Cover (by weightage):**
-${examSubjects.sort((a, b) => b.weightage - a.weightage).slice(0, 4).map(s => `- ${s.name}: ${s.weightage}% (${s.difficulty} difficulty)`).join('\n')}
-` : ''
-
-    const booksInfo = recommendedBooks.length > 0 ? `
-### Recommended Resources
-${recommendedBooks.slice(0, 4).map(b => `- ${b}`).join('\n')}
-` : ''
-    
     return {
-      response: `## Your Adaptive ${examName} Study Plan
-
-I've created a **personalized study plan** using the official ${examName} syllabus and your performance data:
-
-${syllabusInfo}
-**Your Profile:**
-- Overall Accuracy: ${perfData.overallAccuracy}%
-- Weak Areas: ${perfData.weakAreas.join(', ')}
-- Strong Areas: ${perfData.strongAreas.join(', ')}
-
-[STUDY_PLAN]
-${adaptivePlan}
-[/STUDY_PLAN]
-
-### How This Plan Uses the ${examName} Syllabus
-
-1. **High-weightage subjects first** - Focus on subjects that carry more marks
-2. **${perfData.weakAreas[0] || 'Weak areas'}** gets extra attention based on your accuracy
-3. **Topic coverage** - All important topics from the syllabus are included
-4. **Difficulty progression** - Starting with easier topics, progressing to harder ones
-${booksInfo}
-### Key Topics to Master
-${importantTopics.slice(0, 3).map(t => `- ${t}`).join('\n') || '- Focus on fundamentals first'}
-
-Ready to start? Your plan is now in your Study Planner. Want to focus on Day 1 right now?
-
-[ACTION:focus:${firstTopic}] [ACTION:modify:Adjust hours or topics] [ACTION:view:planner]${buildAgentActionsBlock([
-        (() => {
-          const parsed = JSON.parse(adaptivePlan) as {
-            examName: string
-            examDate: string
-            hoursPerDay: number
-            schedule: Array<{ day: number; topics: string[]; hours: number }>
-          }
-          return {
-            type: 'add_study_plan',
-            examName: parsed.examName,
-            examDate: parsed.examDate,
-            hoursPerDay: parsed.hoursPerDay,
-            schedule: parsed.schedule,
-          }
-        })(),
-        { type: 'navigate', page: 'study-planner' },
-      ])}`,
+      response: buildStructuredResponse(
+        'create_plan',
+        `Your ${examName} study plan is ready in Study Planner. Start with ${firstTopic}.`,
+        {
+          plan: JSON.parse(adaptivePlan),
+          taskTitle: firstTopic,
+          recommendedBooks,
+          importantTopics,
+        }
+      ),
       intent
     }
   }
@@ -402,124 +290,55 @@ Ready to start? Your plan is now in your Study Planner. Want to focus on Day 1 r
   if (intent.focus) {
     const suggestedFocus = perfData.weakAreas[0] || 'Study Session'
     return {
-      response: `I understand you're struggling with focus - it's completely normal during intense exam prep!
-
-**Quick Analysis of Your Study Patterns:**
-- Task Completion: ${perfData.taskCompletionRate}%
-- Consistency Score: ${perfData.studyConsistency}%
-
-${perfData.taskCompletionRate < 70 
-  ? '**I notice your task completion could improve.** This might be due to overly ambitious goals or distractions.'
-  : '**Your completion rate is good!** Let\'s optimize your focus during study sessions.'}
-
-### My Focus Recommendations:
-
-1. **Use the Pomodoro Technique**
-   - 25 minutes focused study
-   - 5 minutes break
-   - After 4 sessions, 15-20 min break
-
-2. **Prioritize Weak Areas First**
-   - Start with ${perfData.weakAreas[0] || 'your weakest subject'} when fresh
-   - Save easier topics for low-energy times
-
-3. **Set Micro-Goals**
-   - "Complete 10 questions" instead of "Study Math"
-   - Check off tasks for dopamine hits
-
-4. **Environment Setup**
-   - Phone in another room
-   - Use website blockers
-   - Have water and snacks ready
-
-**I highly recommend activating Focus Mode!** It has a Pomodoro timer that will help you build disciplined study habits.
-
-Ready to start a focused session on your weak area?
-
-[ACTION:focus:${suggestedFocus} - Focused Practice] [ACTION:add-task:Complete 25 ${suggestedFocus} questions]${buildAgentActionsBlock([
-        { type: 'show_focus_prompt' },
-      ])}`,
+      response: buildStructuredResponse(
+        'start_focus',
+        `Focus Mode is ready. Start with ${suggestedFocus}.`,
+        {
+          taskTitle: `${suggestedFocus} - Focused Practice`,
+        }
+      ),
       intent
     }
   }
   
   if (lowerMessage.includes('upsc') || lowerMessage.includes('ias') || lowerMessage.includes('civil service')) {
     return {
-      response: `## UPSC Civil Services - Personalized Guidance
-
-Based on your performance profile, here's my adaptive UPSC strategy:
-
-**Your Current Standing:**
-- Strong in: ${perfData.strongAreas.join(', ')}
-- Needs work: ${perfData.weakAreas.join(', ')}
-
-### Customized UPSC Strategy
-
-**For Your Weak Areas (${perfData.weakAreas.join(', ')}):**
-${perfData.weakAreas.includes('Reasoning') || perfData.weakAreas.includes('Quantitative') 
-  ? '- Focus on CSAT Paper II preparation\n- Daily 50 questions practice\n- Time yourself strictly' 
-  : '- Dedicate morning hours (peak focus)\n- Use NCERT as foundation\n- Make short notes'}
-
-**For Your Strong Areas (${perfData.strongAreas.join(', ')}):**
-- Maintain with 30-min daily practice
-- Focus on advanced/tricky questions
-- Help others (teaching reinforces learning)
-
-### Recommended Daily Routine
-
-| Time | Activity | Subject Focus |
-|------|----------|---------------|
-| 6-8 AM | Current Affairs | Newspapers |
-| 9-12 PM | **${perfData.weakAreas[0] || 'Weak Subject'}** | Deep Study |
-| 2-5 PM | ${perfData.strongAreas[0] || 'Strong Subject'} | Advanced Practice |
-| 6-8 PM | **${perfData.weakAreas[1] || 'Second Priority'}** | Problem Solving |
-| 9-10 PM | Revision | All Subjects |
-
-Want me to create a detailed weekly plan for UPSC based on your performance?`,
+      response: buildStructuredResponse(
+        'ask_question',
+        `I can build a UPSC plan, daily tasks, or a focus session based on your weak areas.`,
+        {
+          question: 'Would you like a UPSC study plan, daily tasks, or a focus session?',
+          progress: {
+            strongAreas: perfData.strongAreas,
+            weakAreas: perfData.weakAreas,
+          },
+        }
+      ),
       intent
     }
   }
   
   // Default mentor response with performance awareness
   return {
-    response: `## Welcome! I'm PrepMaster, Your Adaptive AI Mentor
-
-I've analyzed your learning profile and I'm ready to help you succeed!
-
-**Your Quick Stats:**
-- Quiz Accuracy: **${perfData.overallAccuracy}%** ${perfData.overallAccuracy > 75 ? '(Great!)' : perfData.overallAccuracy > 60 ? '(Good progress!)' : '(Let\'s improve!)'}
-- Strong Areas: ${perfData.strongAreas.join(', ')}
-- Focus Areas: ${perfData.weakAreas.join(', ')}
-
-### How I Can Help You Today
-
-📊 **Analyze Performance**
-"How am I doing?" - Get detailed insights
-
-📋 **Create Adaptive Plans**
-"Create a study plan for UPSC" - Personalized schedules
-
-📝 **Smart Daily Tasks**
-"What should I study today?" - Priority-based tasks
-
-💪 **Stay Focused**
-"I'm feeling distracted" - Activate Focus Mode
-
-### Quick Actions
-Try saying:
-- "Analyze my performance"
-- "Create an adaptive study plan"
-- "Give me today's tasks based on my weak areas"
-- "Help me improve in ${perfData.weakAreas[0] || 'Reasoning'}"
-
-What would you like to work on today?`,
+    response: buildStructuredResponse(
+      'ask_question',
+      `I am ready to help with performance, study plans, tasks, or focus sessions.`,
+      {
+        question: `What would you like to work on today?`,
+        progress: {
+          overallAccuracy: perfData.overallAccuracy,
+          strongAreas: perfData.strongAreas,
+          weakAreas: perfData.weakAreas,
+        },
+      }
+    ),
     intent
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { message, messages: chatHistory, performanceData, selectedExamId } = await request.json()
+    const { message, messages: chatHistory, performanceData, memoryContext, selectedExamId } = await request.json()
     
     // Get syllabus for selected exam
     const syllabus: ExamSyllabus | null = selectedExamId ? getSyllabusById(selectedExamId) : null
@@ -536,7 +355,12 @@ export async function POST(request: NextRequest) {
 
     // If no API key, return mock response with streaming simulation
     if (!apiKey) {
-      const { response: mockResponse, intent: detectedIntent } = getMockResponse(message, performanceData, syllabus)
+      const { response: mockResponse, intent: detectedIntent } = getMockResponse(
+        message,
+        performanceData,
+        syllabus,
+        memoryContext
+      )
       
       const encoder = new TextEncoder()
       const stream = new ReadableStream({
@@ -546,10 +370,10 @@ export async function POST(request: NextRequest) {
             meta: true,
             intent: detectedIntent 
           })}\n\n`))
-          
-          const words = mockResponse.split(' ')
-          for (let i = 0; i < words.length; i++) {
-            const chunk = words[i] + (i < words.length - 1 ? ' ' : '')
+
+          const chunkSize = 24
+          for (let index = 0; index < mockResponse.length; index += chunkSize) {
+            const chunk = mockResponse.slice(index, index + chunkSize)
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`))
             await new Promise(resolve => setTimeout(resolve, 12))
           }
@@ -593,17 +417,33 @@ IMPORTANT: Use this syllabus information to create study plans, daily tasks, and
 USE THIS DATA to personalize your response. Focus recommendations on their weak areas and acknowledge their strengths.`
     }
 
+    let memoryLayerContext = ''
+    if (memoryContext) {
+      const completed = memoryContext.recentCompletedTasks?.slice(-10) || []
+      const quizMemory = memoryContext.recentQuizScores?.slice(-8) || []
+      memoryLayerContext = `
+
+## STUDENT MEMORY LAYER:
+- Recently Completed Tasks: ${completed.length > 0 ? completed.join(', ') : 'None recorded'}
+- Recent Quiz Memory: ${quizMemory.length > 0 ? quizMemory.map((q: { examName: string; scorePercent: number }) => `${q.examName} (${q.scorePercent}%)`).join(', ') : 'None recorded'}
+
+USE THIS MEMORY to adjust recommendations:
+- Avoid repeating the same tasks that were recently completed.
+- Increase challenge if recent quiz scores are improving.
+- Reinforce weak areas that still show low performance.`
+    }
+
     // Build messages array for OpenAI with enhanced context
-    const contextMessage = intent.studyPlan 
-      ? '\n\nNote: The user is asking for a study plan. Include the [STUDY_PLAN] JSON format. Make it ADAPTIVE based on their performance data.'
-      : intent.dailyTasks 
-        ? '\n\nNote: The user is asking for daily tasks. Include the [DAILY_TASKS] JSON format. Prioritize tasks for their WEAK AREAS.'
+    const contextMessage = intent.studyPlan
+      ? '\n\nReturn a JSON object with action="create_plan", a plain text message, and data.plan.'
+      : intent.dailyTasks
+        ? '\n\nReturn a JSON object with action="add_tasks", a plain text message, and data.tasks.'
         : intent.performance
-          ? '\n\nNote: The user wants performance analysis. Provide detailed insights based on their data.'
-          : ''
+          ? '\n\nReturn a JSON object with action="update_progress", a plain text message, and data.progress.'
+          : '\n\nReturn a JSON object with action="ask_question", a plain text message, and a concise question in data.question if details are missing.'
 
     const openaiMessages = [
-      { role: 'system', content: SYSTEM_PROMPT + syllabusContext + performanceContext + contextMessage },
+      { role: 'system', content: SYSTEM_PROMPT + syllabusContext + performanceContext + memoryLayerContext + contextMessage },
       ...(chatHistory || []).slice(-10).map((msg: { role: string; content: string }) => ({
         role: msg.role,
         content: msg.content
@@ -624,6 +464,31 @@ USE THIS DATA to personalize your response. Focus recommendations on their weak 
         temperature: 0.7,
         max_tokens: 2000,
         stream: true,
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'structured_study_assistant_response',
+            strict: true,
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['action', 'message', 'data'],
+              properties: {
+                action: {
+                  type: 'string',
+                  enum: ['create_plan', 'add_tasks', 'start_focus', 'update_progress', 'ask_question'],
+                },
+                message: {
+                  type: 'string',
+                },
+                data: {
+                  type: 'object',
+                  additionalProperties: true,
+                },
+              },
+            },
+          },
+        },
       }),
     })
 

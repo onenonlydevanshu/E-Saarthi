@@ -83,6 +83,20 @@ export interface AdaptiveInsights {
   lastUpdated: string
 }
 
+export interface LearningMemory {
+  recentCompletedTasks: Array<{
+    title: string
+    completedAt: string
+    via: 'manual' | 'focus'
+  }>
+  recentQuizScores: Array<{
+    examName: string
+    scorePercent: number
+    date: string
+  }>
+  recommendationHistory: string[]
+}
+
 interface AppState {
   // Theme
   theme: 'light' | 'dark'
@@ -153,7 +167,14 @@ interface AppState {
   taskCompletionHistory: TaskCompletion[]
   addTaskCompletionRecord: (record: Omit<TaskCompletion, 'date'>) => void
   adaptiveInsights: AdaptiveInsights
+  learningMemory: LearningMemory
+  recordTaskCompletion: (title: string, via: 'manual' | 'focus') => void
   updateAdaptiveInsights: () => void
+  getMemoryContext: () => {
+    recentCompletedTasks: string[]
+    recentQuizScores: Array<{ examName: string; scorePercent: number; date: string }>
+    recommendationHistory: string[]
+  }
   getPerformanceData: () => {
     overallAccuracy: number
     weakAreas: string[]
@@ -262,11 +283,29 @@ export const useAppStore = create<AppState>()(
           ],
         })),
       toggleTask: (id) =>
-        set((state) => ({
-          tasks: state.tasks.map((t) =>
-            t.id === id ? { ...t, completed: !t.completed } : t
-          ),
-        })),
+        set((state) => {
+          const taskToToggle = state.tasks.find((t) => t.id === id)
+          const willComplete = !!taskToToggle && !taskToToggle.completed
+          return {
+            tasks: state.tasks.map((t) =>
+              t.id === id ? { ...t, completed: !t.completed } : t
+            ),
+            learningMemory:
+              willComplete && taskToToggle
+                ? {
+                    ...state.learningMemory,
+                    recentCompletedTasks: [
+                      ...state.learningMemory.recentCompletedTasks,
+                      {
+                        title: taskToToggle.title,
+                        completedAt: new Date().toISOString(),
+                        via: 'manual',
+                      },
+                    ].slice(-40),
+                  }
+                : state.learningMemory,
+          }
+        }),
       removeTask: (id) =>
         set((state) => ({
           tasks: state.tasks.filter((t) => t.id !== id),
@@ -315,6 +354,17 @@ export const useAppStore = create<AppState>()(
               date: new Date().toISOString().split('T')[0],
             },
           ],
+          learningMemory: {
+            ...state.learningMemory,
+            recentQuizScores: [
+              ...state.learningMemory.recentQuizScores,
+              {
+                examName: result.examName,
+                scorePercent: Math.round((result.score / Math.max(result.total, 1)) * 100),
+                date: new Date().toISOString().split('T')[0],
+              },
+            ].slice(-12),
+          },
         })),
 
       // Focus Mode
@@ -328,10 +378,22 @@ export const useAppStore = create<AppState>()(
       completeFocusTask: () =>
         set((state) => {
           if (state.currentFocusTask) {
+            const completedTitle = state.currentFocusTask.title
             return {
               tasks: state.tasks.map((t) =>
                 t.id === state.currentFocusTask?.id ? { ...t, completed: true } : t
               ),
+              learningMemory: {
+                ...state.learningMemory,
+                recentCompletedTasks: [
+                  ...state.learningMemory.recentCompletedTasks,
+                  {
+                    title: completedTitle,
+                    completedAt: new Date().toISOString(),
+                    via: 'focus',
+                  },
+                ].slice(-40),
+              },
               currentFocusTask: null,
             }
           }
@@ -402,6 +464,25 @@ export const useAppStore = create<AppState>()(
         },
         lastUpdated: new Date().toISOString(),
       },
+      learningMemory: {
+        recentCompletedTasks: [],
+        recentQuizScores: [],
+        recommendationHistory: [],
+      },
+      recordTaskCompletion: (title, via) =>
+        set((state) => ({
+          learningMemory: {
+            ...state.learningMemory,
+            recentCompletedTasks: [
+              ...state.learningMemory.recentCompletedTasks,
+              {
+                title,
+                completedAt: new Date().toISOString(),
+                via,
+              },
+            ].slice(-40),
+          },
+        })),
       updateAdaptiveInsights: () =>
         set((state) => {
           const performances = state.subjectPerformance
@@ -466,6 +547,16 @@ export const useAppStore = create<AppState>()(
         const studyConsistency = recentTasks.length >= 5 ? Math.round((recentTasks.length / 7) * 100) : 50
         
         return { overallAccuracy, weakAreas, strongAreas, taskCompletionRate, studyConsistency }
+      },
+      getMemoryContext: () => {
+        const state = useAppStore.getState()
+        return {
+          recentCompletedTasks: state.learningMemory.recentCompletedTasks
+            .slice(-10)
+            .map((t) => t.title),
+          recentQuizScores: state.learningMemory.recentQuizScores.slice(-8),
+          recommendationHistory: state.learningMemory.recommendationHistory.slice(-10),
+        }
       },
     }),
     {

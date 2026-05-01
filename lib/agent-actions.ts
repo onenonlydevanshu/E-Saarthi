@@ -11,6 +11,33 @@
 
 import type { ScheduleItem } from './store'
 
+export type StructuredChatAction =
+  | 'create_plan'
+  | 'add_tasks'
+  | 'start_focus'
+  | 'update_progress'
+  | 'ask_question'
+
+export interface StructuredChatData {
+  plan?: {
+    examName: string
+    examDate: string
+    hoursPerDay: number
+    schedule: ScheduleItem[]
+  }
+  tasks?: string[]
+  taskTitle?: string
+  progress?: Record<string, unknown>
+  question?: string
+  [key: string]: unknown
+}
+
+export interface StructuredChatResponse {
+  action: StructuredChatAction
+  message: string
+  data?: StructuredChatData
+}
+
 // All supported action types the agent can emit
 export type AgentAction =
   | { type: 'navigate'; page: AppPage }
@@ -89,6 +116,29 @@ Available agent actions (emit as JSON array inside [AGENT_ACTIONS]...[/AGENT_ACT
     - Opens or closes the chat panel.
 `.trim()
 
+export const CHAT_CONTROLLER_SCHEMA = `
+Primary controller payload (return as a single JSON object only):
+
+{
+  "action": "create_plan" | "add_tasks" | "start_focus" | "update_progress" | "ask_question",
+  "message": "Human-readable assistant response in plain text",
+  "data": {
+    "plan": { "examName": "...", "examDate": "YYYY-MM-DD", "hoursPerDay": 6, "schedule": [...] },
+    "tasks": ["Task 1", "Task 2"],
+    "taskTitle": "Specific task to focus on",
+    "progress": {}
+  }
+}
+
+Rules:
+- "action", "message", and "data" are required.
+- "message" must be plain text only.
+- Include "data.plan" when you generate a study plan.
+- Include "data.tasks" when you generate tasks.
+- Include "data.taskTitle" for focus starts.
+- Include "data.progress" when summarizing performance.
+`.trim()
+
 // Methods the executor needs from the Zustand store
 export interface AgentActionExecutorDeps {
   setActivePage: (page: string) => void
@@ -119,6 +169,137 @@ export interface ExecutedAction {
   action: AgentAction
   status: 'success' | 'error'
   message: string
+}
+
+export interface ChatControllerData {
+  plan?: {
+    examName: string
+    examDate: string
+    hoursPerDay: number
+    schedule: ScheduleItem[]
+  }
+  tasks?: string[]
+  taskTitle?: string
+  studyPlan?: {
+    examName: string
+    examDate: string
+    hoursPerDay: number
+    schedule: ScheduleItem[]
+  }
+  dailyTasks?: string[]
+}
+
+export interface ChatControllerPayload {
+  message: string
+  action?: StructuredChatAction
+  actions: AgentAction[]
+  data?: ChatControllerData
+}
+
+function isStructuredChatAction(value: unknown): value is StructuredChatAction {
+  return (
+    value === 'create_plan' ||
+    value === 'add_tasks' ||
+    value === 'start_focus' ||
+    value === 'update_progress' ||
+    value === 'ask_question'
+  )
+}
+
+function normalizeText(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value.trim() : fallback
+}
+
+function normalizeStructuredData(data: unknown): StructuredChatData {
+  if (!data || typeof data !== 'object') {
+    return {}
+  }
+
+  const raw = data as Record<string, unknown>
+  const plan =
+    raw.plan && typeof raw.plan === 'object'
+      ? (raw.plan as StructuredChatData['plan'])
+      : raw.studyPlan && typeof raw.studyPlan === 'object'
+        ? (raw.studyPlan as StructuredChatData['plan'])
+        : undefined
+
+  const tasks = Array.isArray(raw.tasks)
+    ? raw.tasks.filter((task): task is string => typeof task === 'string')
+    : Array.isArray(raw.dailyTasks)
+      ? raw.dailyTasks.filter((task): task is string => typeof task === 'string')
+      : undefined
+
+  const taskTitle = normalizeText(raw.taskTitle ?? raw.focusTask ?? tasks?.[0], '')
+
+  const progress =
+    raw.progress && typeof raw.progress === 'object'
+      ? (raw.progress as Record<string, unknown>)
+      : undefined
+
+  const question = normalizeText(raw.question, '')
+
+  return {
+    ...raw,
+    ...(plan ? { plan } : {}),
+    ...(tasks ? { tasks } : {}),
+    ...(taskTitle ? { taskTitle } : {}),
+    ...(progress ? { progress } : {}),
+    ...(question ? { question } : {}),
+  }
+}
+
+function extractJsonCandidate(content: string): string {
+  const trimmed = content.trim()
+  const legacyMatch = trimmed.match(/\[CHAT_CONTROLLER\]([\s\S]*?)\[\/CHAT_CONTROLLER\]/)
+  const source = legacyMatch?.[1]?.trim() ?? trimmed
+
+  const fenced = source
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
+    .trim()
+
+  if (fenced.startsWith('{') && fenced.endsWith('}')) {
+    return fenced
+  }
+
+  const start = fenced.indexOf('{')
+  const end = fenced.lastIndexOf('}')
+  if (start >= 0 && end > start) {
+    return fenced.slice(start, end + 1)
+  }
+
+  return fenced
+}
+
+export function normalizeStructuredChatResponse(
+  content: string
+): StructuredChatResponse {
+  const candidate = extractJsonCandidate(content)
+
+  try {
+    const parsed = JSON.parse(candidate) as Partial<StructuredChatResponse> & {
+      data?: unknown
+    }
+    const action = isStructuredChatAction(parsed.action)
+      ? parsed.action
+      : 'ask_question'
+    const message = normalizeText(parsed.message, normalizeText(content, ''))
+
+    return {
+      action,
+      message: message || 'I need a little more information to continue.',
+      data: normalizeStructuredData(parsed.data),
+    }
+  } catch {
+    return {
+      action: 'ask_question',
+      message:
+        normalizeText(candidate, '') ||
+        'I need a little more information to continue.',
+      data: {},
+    }
+  }
 }
 
 /**
@@ -325,10 +506,108 @@ export function parseAgentActions(content: string): AgentAction[] | null {
 }
 
 /**
+ * Parse a [CHAT_CONTROLLER]...[/CHAT_CONTROLLER] block.
+ * Returns null when missing or invalid.
+ */
+export function parseChatControllerPayload(
+  content: string
+): ChatControllerPayload | null {
+  const structured = normalizeStructuredChatResponse(content)
+  const actions: AgentAction[] = []
+  const plan = structured.data?.plan
+  const tasks = structured.data?.tasks ?? []
+  const taskTitle = structured.data?.taskTitle || tasks[0]
+
+  if (structured.action === 'create_plan' && plan) {
+    actions.push({
+      type: 'add_study_plan',
+      examName: plan.examName,
+      examDate: plan.examDate,
+      hoursPerDay: plan.hoursPerDay,
+      schedule: plan.schedule,
+    })
+  }
+
+  if (structured.action === 'add_tasks' && tasks.length > 0) {
+    actions.push({ type: 'add_tasks', titles: tasks })
+  }
+
+  if (structured.action === 'start_focus' && taskTitle) {
+    actions.push({ type: 'start_focus', taskTitle })
+  }
+
+  if (structured.action === 'update_progress') {
+    actions.push({ type: 'navigate', page: 'progress-tracker' })
+  }
+
+  return {
+    message: structured.message,
+    action: structured.action,
+    actions,
+    data: structured.data,
+  }
+}
+
+export function executeStructuredChatResponse(
+  payload: StructuredChatResponse,
+  deps: AgentActionExecutorDeps
+): ExecutedAction[] {
+  switch (payload.action) {
+    case 'create_plan': {
+      const plan = payload.data?.plan
+      if (!plan) return []
+      return [
+        executeAgentAction(
+          {
+            type: 'add_study_plan',
+            examName: plan.examName,
+            examDate: plan.examDate,
+            hoursPerDay: plan.hoursPerDay,
+            schedule: plan.schedule,
+          },
+          deps
+        ),
+        executeAgentAction({ type: 'navigate', page: 'study-planner' }, deps),
+      ]
+    }
+
+    case 'add_tasks': {
+      const tasks = payload.data?.tasks ?? []
+      if (tasks.length === 0) return []
+      return [
+        executeAgentAction({ type: 'add_tasks', titles: tasks }, deps),
+        executeAgentAction({ type: 'navigate', page: 'daily-tasks' }, deps),
+      ]
+    }
+
+    case 'start_focus': {
+      const taskTitle = payload.data?.taskTitle || payload.data?.tasks?.[0]
+      if (!taskTitle) return []
+      return [executeAgentAction({ type: 'start_focus', taskTitle }, deps)]
+    }
+
+    case 'update_progress': {
+      return [
+        executeAgentAction({ type: 'navigate', page: 'progress-tracker' }, deps),
+      ]
+    }
+
+    case 'ask_question':
+    default:
+      return []
+  }
+}
+
+/**
  * Strip agent action blocks from a message before display.
  */
 export function stripAgentActions(content: string): string {
-  return content.replace(/\[AGENT_ACTIONS\][\s\S]*?\[\/AGENT_ACTIONS\]/g, '').trim()
+  return content
+    .replace(/```json[\s\S]*?```/g, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/\[AGENT_ACTIONS\][\s\S]*?\[\/AGENT_ACTIONS\]/g, '')
+    .replace(/\[CHAT_CONTROLLER\][\s\S]*?\[\/CHAT_CONTROLLER\]/g, '')
+    .trim()
 }
 
 function formatPageName(page: string): string {

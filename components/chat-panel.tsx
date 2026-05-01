@@ -35,10 +35,12 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { getAllExams, getSyllabusById } from '@/lib/syllabus-data'
 import {
-  parseAgentActions,
+  parseChatControllerPayload,
   stripAgentActions,
   executeAgentAction,
+  executeStructuredChatResponse,
   type ExecutedAction,
+  type AgentAction,
 } from '@/lib/agent-actions'
 
 // Keywords that trigger Focus Mode activation
@@ -63,34 +65,6 @@ function detectFocusIntent(message: string): boolean {
   return FOCUS_KEYWORDS.some(keyword => lowerMessage.includes(keyword))
 }
 
-// Parse study plan from AI response
-function parseStudyPlan(content: string): { examName: string; examDate: string; hoursPerDay: number; schedule: ScheduleItem[] } | null {
-  const planMatch = content.match(/\[STUDY_PLAN\]([\s\S]*?)\[\/STUDY_PLAN\]/)
-  if (planMatch) {
-    try {
-      const planJson = planMatch[1].trim()
-      return JSON.parse(planJson)
-    } catch {
-      return null
-    }
-  }
-  return null
-}
-
-// Parse daily tasks from AI response
-function parseDailyTasks(content: string): string[] | null {
-  const tasksMatch = content.match(/\[DAILY_TASKS\]([\s\S]*?)\[\/DAILY_TASKS\]/)
-  if (tasksMatch) {
-    try {
-      const tasksJson = tasksMatch[1].trim()
-      return JSON.parse(tasksJson)
-    } catch {
-      return null
-    }
-  }
-  return null
-}
-
 // Quick action suggestions
 const QUICK_ACTIONS = [
   { icon: BookOpen, label: 'My Performance', prompt: 'Analyze my performance and give me insights on my weak and strong areas' },
@@ -101,7 +75,7 @@ const QUICK_ACTIONS = [
 
 // Inline action button types
 interface InlineAction {
-  type: 'focus' | 'add-task' | 'add-plan' | 'modify' | 'view'
+  type: 'focus' | 'add-task' | 'add-plan' | 'modify' | 'regenerate-plan' | 'view'
   label: string
   data?: string
 }
@@ -121,7 +95,8 @@ function parseInlineActions(content: string): { cleanContent: string; actions: I
       'focus': 'Start Focus',
       'add-task': 'Add to Tasks',
       'add-plan': 'Add to Planner',
-      'modify': 'Modify Plan',
+      'modify': 'Regenerate Plan',
+      'regenerate-plan': 'Regenerate Plan',
       'view': 'View Details'
     }
     actions.push({
@@ -135,6 +110,23 @@ function parseInlineActions(content: string): { cleanContent: string; actions: I
   return { cleanContent: cleanContent.trim(), actions }
 }
 
+function getAutoInlineActions(content: string): InlineAction[] {
+  const payload = parseChatControllerPayload(content)
+  if (!payload?.data) return []
+
+  const tasks = payload.data.tasks ?? payload.data.dailyTasks ?? []
+  const focusTask = payload.data.taskTitle || tasks[0]
+  if (!focusTask) return []
+
+  return [
+    {
+      type: 'focus',
+      label: 'Start Focus',
+      data: focusTask,
+    },
+  ]
+}
+
 export function ChatPanel() {
   const {
     chatOpen,
@@ -142,6 +134,7 @@ export function ChatPanel() {
     messages,
     addMessage,
     appendToLastMessage,
+    updateLastMessage,
     clearMessages,
     setActivePage,
     addStudyPlan,
@@ -151,6 +144,7 @@ export function ChatPanel() {
     addExam,
     exams,
     getPerformanceData,
+    getMemoryContext,
     adaptiveInsights,
     setCurrentFocusTask,
     setFocusAutoStart,
@@ -235,6 +229,7 @@ export function ChatPanel() {
       } else {
         setCurrentFocusTask({ id: tempId, title: taskTitle })
       }
+      setFocusAutoStart(true)
       setActivePage('focus-mode')
       if (!keepChatOpen) setChatOpen(false)
     }, 100)
@@ -262,10 +257,14 @@ export function ChatPanel() {
         setChatOpen(false)
         break
       case 'modify':
+      case 'regenerate-plan':
         if (action.data) {
           setPendingModification(action.data)
-          setInput(`Modify my study plan: ${action.data}`)
+          setInput(`Regenerate my study plan: ${action.data}`)
+        } else {
+          setInput('Regenerate my study plan with updated priorities and better topic balance.')
         }
+        setShowQuickActions(false)
         break
       case 'view':
         if (action.data === 'tasks') {
@@ -281,9 +280,8 @@ export function ChatPanel() {
 
   // Execute structured agent actions emitted by the AI
   const runAgentActions = useCallback(
-    (rawContent: string) => {
-      const actions = parseAgentActions(rawContent)
-      if (!actions || actions.length === 0) return
+    (actions: AgentAction[]) => {
+      if (!actions || actions.length === 0) return []
 
       const deps = {
         setActivePage,
@@ -320,6 +318,7 @@ export function ChatPanel() {
         // Auto-clear executed actions list after a short delay
         setTimeout(() => setRecentlyExecuted([]), 6000)
       }
+      return actions
     },
     [
       setActivePage,
@@ -336,9 +335,12 @@ export function ChatPanel() {
     ]
   )
 
-  // Handle request for modification
-  const handleRequestModification = () => {
-    setInput('Please modify the study plan with the following changes: ')
+  const handleRegeneratePlan = (context?: string) => {
+    const suffix = context ? ` for ${context}` : ''
+    setInput(
+      `Regenerate my study plan${suffix} with improved topic distribution and updated priorities.`
+    )
+    setShowQuickActions(false)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -364,6 +366,7 @@ export function ChatPanel() {
       
       // Get performance data for adaptive responses
       const performanceData = getPerformanceData()
+      const memoryContext = getMemoryContext()
       
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -375,6 +378,7 @@ export function ChatPanel() {
             ...performanceData,
             recentInsights: adaptiveInsights,
           },
+          memoryContext,
           selectedExamId,
         }),
         signal: abortControllerRef.current.signal,
@@ -417,7 +421,6 @@ export function ChatPanel() {
               }
               
               if (parsed.content) {
-                appendToLastMessage(parsed.content)
                 fullResponseRef.current += parsed.content
               }
             } catch {
@@ -427,21 +430,33 @@ export function ChatPanel() {
         }
       }
 
-      // Parse and execute structured agent actions emitted by the AI.
-      // This is what makes the AI a true agent - it can directly modify
-      // the app state without requiring user button clicks.
-      runAgentActions(fullResponseRef.current)
+      const controllerPayload = parseChatControllerPayload(fullResponseRef.current)
+      if (controllerPayload) {
+        updateLastMessage(controllerPayload.message)
+        const executedActions = executeStructuredChatResponse(controllerPayload, {
+          setActivePage,
+          addTask,
+          toggleTask,
+          clearTasks,
+          addStudyPlan,
+          setCurrentFocusTask,
+          setFocusAutoStart,
+          setSelectedExamId,
+          addExam,
+          setTheme,
+          setChatOpen,
+          getTasks: () => useAppStore.getState().tasks,
+        })
 
-      // Keep parsing legacy preview cards (study plan / tasks) so the user
-      // still gets a rich visual confirmation of what was added.
-      const plan = parseStudyPlan(fullResponseRef.current)
-      const tasks = parseDailyTasks(fullResponseRef.current)
+        if (controllerPayload.action === 'ask_question' && controllerPayload.data?.question) {
+          setDetectedPlan(null)
+          setDetectedTasks(null)
+        }
 
-      if (plan) {
-        setTimeout(() => setDetectedPlan(plan), 300)
-      }
-      if (tasks) {
-        setTimeout(() => setDetectedTasks(tasks), 300)
+        if (executedActions.length > 0) {
+          setRecentlyExecuted(executedActions)
+          setTimeout(() => setRecentlyExecuted([]), 6000)
+        }
       }
 
       // Fallback: if the AI didn't emit show_focus_prompt but the user
@@ -474,6 +489,11 @@ export function ChatPanel() {
 
   // Format message content (remove the JSON blocks from display)
   const formatMessageContent = (content: string) => {
+    const payload = parseChatControllerPayload(content)
+    if (payload?.message) {
+      return payload.message.trim()
+    }
+
     return stripAgentActions(
       content
         .replace(/\[STUDY_PLAN\][\s\S]*?\[\/STUDY_PLAN\]/g, '')
@@ -679,8 +699,19 @@ export function ChatPanel() {
           )}
 
           {messages.map((message, index) => {
-            const { cleanContent, actions } = message.role === 'assistant' 
-              ? parseInlineActions(formatMessageContent(message.content))
+            const { cleanContent, actions } = message.role === 'assistant'
+              ? (() => {
+                  const parsed = parseInlineActions(formatMessageContent(message.content))
+                  const autoActions = getAutoInlineActions(message.content)
+                  const merged = [...parsed.actions]
+                  autoActions.forEach((action) => {
+                    const exists = merged.some(
+                      (a) => a.type === action.type && a.data === action.data
+                    )
+                    if (!exists) merged.push(action)
+                  })
+                  return { cleanContent: parsed.cleanContent, actions: merged }
+                })()
               : { cleanContent: message.content, actions: [] }
             
             return (
@@ -744,7 +775,9 @@ export function ChatPanel() {
                         {action.type === 'focus' && <Play className="w-3.5 h-3.5 text-emerald-500" />}
                         {action.type === 'add-task' && <ListPlus className="w-3.5 h-3.5 text-blue-500" />}
                         {action.type === 'add-plan' && <Calendar className="w-3.5 h-3.5 text-violet-500" />}
-                        {action.type === 'modify' && <Edit3 className="w-3.5 h-3.5 text-amber-500" />}
+                        {(action.type === 'modify' || action.type === 'regenerate-plan') && (
+                          <Edit3 className="w-3.5 h-3.5 text-amber-500" />
+                        )}
                         {action.type === 'view' && <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
                         {action.label}
                       </Button>
@@ -800,9 +833,10 @@ export function ChatPanel() {
                         size="sm"
                         variant="ghost"
                         onClick={() => handleStartFocusOnTask(item.topics[0] || 'Study Session')}
-                        className="h-7 px-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10"
+                        className="h-7 px-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10 gap-1"
                       >
                         <Timer className="w-3.5 h-3.5" />
+                        <span className="text-xs">Start Focus</span>
                       </Button>
                     </div>
                   ))}
@@ -823,11 +857,11 @@ export function ChatPanel() {
                     </Button>
                     <Button
                       variant="outline"
-                      onClick={handleRequestModification}
+                      onClick={() => handleRegeneratePlan(detectedPlan.examName)}
                       className="rounded-xl gap-2"
                     >
                       <Edit3 className="w-4 h-4" />
-                      Modify
+                      Regenerate Plan
                     </Button>
                   </div>
                   <Button
@@ -885,7 +919,7 @@ export function ChatPanel() {
                         className="h-8 px-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity text-blue-600 hover:text-blue-700 hover:bg-blue-500/10"
                       >
                         <Play className="w-3.5 h-3.5 mr-1" />
-                        <span className="text-xs">Focus</span>
+                        <span className="text-xs">Start Focus</span>
                       </Button>
                     </div>
                   ))}
@@ -897,7 +931,7 @@ export function ChatPanel() {
                     className="gap-2 rounded-xl shadow-lg bg-blue-600 hover:bg-blue-700 text-white"
                   >
                     <Plus className="w-4 h-4" />
-                    Add All Tasks
+                    Add to Tasks
                   </Button>
                   <Button
                     variant="outline"
