@@ -20,6 +20,12 @@ Rules:
 - Every message must include a clear next step suggestion.
 - Keep mentor tone: proactive, supportive, and action-oriented.
 - Avoid generic phrasing. Anchor recommendations to current app state when available.
+- Maintain continuity by referencing the latest completed action or active flow when context is available.
+- Do not return purely informational updates; every message must drive an immediate productive next action.
+- If completed tasks exist, briefly acknowledge progress in X out of Y format and encourage continuation in one short line.
+- Reference specific subjects, weak areas, or task titles instead of generic terms like "topic" or "task" when context is available.
+- Adjust tone by progress: encouraging and corrective when behind, reinforcing and precise when consistent.
+- Avoid generic motivational phrases without context.
 - Use data.plan for study plans, data.tasks for daily tasks, data.taskTitle for focus, and data.progress for performance summaries.
 `
 
@@ -51,6 +57,119 @@ interface AppStateContext {
   completedTasksCount?: number
   latestPlanExamName?: string
   latestPlanTopTopic?: string
+  nextPendingTaskTitle?: string
+}
+
+interface RecentActionContext {
+  action: 'create_plan' | 'add_tasks' | 'start_focus' | 'update_progress' | 'ask_question'
+  summary: string
+}
+
+type ControllerAction =
+  | 'create_plan'
+  | 'add_tasks'
+  | 'start_focus'
+  | 'update_progress'
+  | 'ask_question'
+
+interface SuggestionContext {
+  lastSuggestedAction?: ControllerAction | null
+  lastSuggestedTaskTitle?: string | null
+  repeatStreak?: number
+}
+
+interface DecisionPolicy {
+  hasActiveFocus: boolean
+  activeFocusTitle: string | null
+  hasPendingTasks: boolean
+  pendingTasksCount: number
+  hasExistingPlan: boolean
+  nextPendingTaskTitle: string | null
+}
+
+function getPreferredAction(
+  intent: { focus: boolean; studyPlan: boolean; dailyTasks: boolean; performance: boolean },
+  decisionPolicy: DecisionPolicy
+): ControllerAction {
+  if (decisionPolicy.hasActiveFocus) return 'start_focus'
+  if (decisionPolicy.hasPendingTasks && (intent.studyPlan || intent.dailyTasks)) {
+    return 'start_focus'
+  }
+  if (intent.studyPlan && decisionPolicy.hasExistingPlan) return 'ask_question'
+  if (intent.studyPlan) return 'create_plan'
+  if (intent.dailyTasks) return 'add_tasks'
+  if (intent.performance) return 'update_progress'
+  return 'ask_question'
+}
+
+function hasUserIgnoredSuggestion(message: string): boolean {
+  const text = message.toLowerCase()
+  const ignoreSignals = [
+    'not now',
+    'later',
+    'skip',
+    'ignore',
+    'did not',
+    "didn't",
+    'not done',
+    'stuck',
+    "can't",
+    'cannot',
+    'still',
+    'yet',
+  ]
+  return ignoreSignals.some((signal) => text.includes(signal))
+}
+
+function getRotatedAction(
+  preferred: ControllerAction,
+  decisionPolicy: DecisionPolicy,
+  intent: { focus: boolean; studyPlan: boolean; dailyTasks: boolean; performance: boolean }
+): ControllerAction {
+  if (preferred === 'start_focus') {
+    return 'ask_question'
+  }
+
+  if (preferred === 'ask_question') {
+    if (decisionPolicy.hasPendingTasks) return 'start_focus'
+    if (!decisionPolicy.hasExistingPlan && intent.studyPlan) return 'create_plan'
+    if (intent.performance) return 'update_progress'
+    return 'add_tasks'
+  }
+
+  if (preferred === 'add_tasks') {
+    return decisionPolicy.hasPendingTasks ? 'start_focus' : 'update_progress'
+  }
+
+  if (preferred === 'create_plan') {
+    return decisionPolicy.hasPendingTasks ? 'start_focus' : 'ask_question'
+  }
+
+  return decisionPolicy.hasPendingTasks ? 'start_focus' : 'ask_question'
+}
+
+function getEffectiveAction(
+  preferred: ControllerAction,
+  suggestionContext: SuggestionContext | undefined,
+  message: string,
+  decisionPolicy: DecisionPolicy,
+  intent: { focus: boolean; studyPlan: boolean; dailyTasks: boolean; performance: boolean }
+): { action: ControllerAction; rotated: boolean } {
+  const lastSuggested = suggestionContext?.lastSuggestedAction || null
+  const repeatStreak = suggestionContext?.repeatStreak ?? 0
+  const userIgnored = hasUserIgnoredSuggestion(message)
+  const shouldRotate =
+    !!lastSuggested &&
+    lastSuggested === preferred &&
+    repeatStreak >= 1 &&
+    !userIgnored &&
+    !decisionPolicy.hasActiveFocus
+
+  if (!shouldRotate) return { action: preferred, rotated: false }
+  return {
+    action: getRotatedAction(preferred, decisionPolicy, intent),
+    rotated: true,
+  }
 }
 
 function getFocusTaskTitle(
@@ -82,6 +201,24 @@ function detectIntent(message: string): { focus: boolean; studyPlan: boolean; da
     studyPlan: STUDY_PLAN_KEYWORDS.some(keyword => lowerMessage.includes(keyword)),
     dailyTasks: DAILY_TASK_KEYWORDS.some(keyword => lowerMessage.includes(keyword)),
     performance: PERFORMANCE_KEYWORDS.some(keyword => lowerMessage.includes(keyword))
+  }
+}
+
+function deriveDecisionPolicy(
+  appState: AppStateContext | undefined,
+  activeFocusTitle: string
+): DecisionPolicy {
+  const pendingTasksCount = Math.max(0, appState?.pendingTasksCount ?? 0)
+  const hasActiveFocus = activeFocusTitle !== 'No active focus session'
+  const nextPendingTaskTitle = appState?.nextPendingTaskTitle?.trim() || null
+
+  return {
+    hasActiveFocus,
+    activeFocusTitle: hasActiveFocus ? activeFocusTitle : null,
+    hasPendingTasks: pendingTasksCount > 0,
+    pendingTasksCount,
+    hasExistingPlan: !!appState?.latestPlanExamName,
+    nextPendingTaskTitle,
   }
 }
 
@@ -241,7 +378,10 @@ function getMockResponse(
   message: string,
   performanceData?: PerformanceData,
   syllabus?: ExamSyllabus | null,
-  memoryContext?: MemoryContext
+  memoryContext?: MemoryContext,
+  appState?: AppStateContext,
+  activeFocusTitle = 'No active focus session',
+  suggestionContext?: SuggestionContext
 ): {
   response: string
   intent: { focus: boolean; studyPlan: boolean; dailyTasks: boolean; performance: boolean } 
@@ -261,8 +401,64 @@ function getMockResponse(
   const examSubjects = syllabus?.subjects || []
   const importantTopics = syllabus?.importantTopics || []
   const recommendedBooks = syllabus?.recommendedBooks || []
+  const decisionPolicy = deriveDecisionPolicy(appState, activeFocusTitle)
+  const preferredAction = getPreferredAction(intent, decisionPolicy)
+  const { action: effectiveAction, rotated } = getEffectiveAction(
+    preferredAction,
+    suggestionContext,
+    message,
+    decisionPolicy,
+    intent
+  )
+
+  if (decisionPolicy.hasActiveFocus && decisionPolicy.activeFocusTitle) {
+    return {
+      response: buildStructuredResponse(
+        'start_focus',
+        `You already have an active focus session on ${decisionPolicy.activeFocusTitle}. Next step: continue and complete this session before switching tasks.`,
+        {
+          taskTitle: decisionPolicy.activeFocusTitle,
+        }
+      ),
+      intent,
+    }
+  }
+
+  if (effectiveAction === 'start_focus' && decisionPolicy.hasPendingTasks) {
+    const priorityTask =
+      decisionPolicy.nextPendingTaskTitle ||
+      perfData.weakAreas[0] ||
+      'your highest-priority pending task'
+
+    return {
+      response: buildStructuredResponse(
+        'start_focus',
+        rotated
+          ? `To keep progress moving, switch to your next pending task: ${priorityTask}. Next step: start focus and finish one full cycle.`
+          : `You have ${decisionPolicy.pendingTasksCount} pending tasks already. Next step: start focus on ${priorityTask} before creating anything new.`,
+        {
+          taskTitle: priorityTask,
+        }
+      ),
+      intent,
+    }
+  }
+
+  if (effectiveAction === 'ask_question' && intent.studyPlan && decisionPolicy.hasExistingPlan) {
+    const topTopic = appState?.latestPlanTopTopic || 'today\'s top plan topic'
+    return {
+      response: buildStructuredResponse(
+        'ask_question',
+        `A study plan already exists for ${appState?.latestPlanExamName}. Next step: execute ${topTopic} now, or tell me if you want to replace the current plan.`,
+        {
+          question: 'Should I replace your existing study plan, or continue with it?'
+        }
+      ),
+      intent,
+    }
+  }
   
-  if (intent.performance) {
+  if (effectiveAction === 'update_progress') {
     const weakArea = perfData.weakAreas[0] || 'your weakest topic'
     return {
       response: buildStructuredResponse(
@@ -286,7 +482,7 @@ function getMockResponse(
     }
   }
   
-  if (intent.dailyTasks) {
+  if (effectiveAction === 'add_tasks') {
     const adaptiveTasks = generateAdaptiveTasks(perfData, memoryContext)
     const firstTask = adaptiveTasks[0]?.replace(/^\[\w+\]\s*/, '') || 'Start studying'
     
@@ -303,7 +499,7 @@ function getMockResponse(
     }
   }
   
-  if (intent.studyPlan) {
+  if (effectiveAction === 'create_plan') {
     const adaptivePlan = generateAdaptiveStudyPlan(perfData, syllabus?.examName || examName)
     const firstTopic = examSubjects[0]?.topics[0] || perfData.weakAreas[0] || 'Day 1 Topics'
     
@@ -381,6 +577,8 @@ export async function POST(request: NextRequest) {
       memoryContext,
       currentFocusTask,
       appState,
+      recentActionHistory,
+      suggestionContext,
       selectedExamId,
     } = await request.json()
     
@@ -396,6 +594,20 @@ export async function POST(request: NextRequest) {
 
     const apiKey = process.env.OPENAI_API_KEY
     const intent = detectIntent(message)
+    const typedAppState =
+      appState && typeof appState === 'object'
+        ? (appState as AppStateContext)
+        : undefined
+    const activeFocusTitle = getFocusTaskTitle(currentFocusTask, memoryContext)
+    const decisionPolicy = deriveDecisionPolicy(typedAppState, activeFocusTitle)
+    const preferredAction = getPreferredAction(intent, decisionPolicy)
+    const { action: effectiveAction, rotated: wasActionRotated } = getEffectiveAction(
+      preferredAction,
+      suggestionContext,
+      message,
+      decisionPolicy,
+      intent
+    )
 
     // If no API key, return mock response with streaming simulation
     if (!apiKey) {
@@ -403,7 +615,10 @@ export async function POST(request: NextRequest) {
         message,
         performanceData,
         syllabus,
-        memoryContext
+        memoryContext,
+        typedAppState,
+        activeFocusTitle,
+        suggestionContext
       )
       
       const encoder = new TextEncoder()
@@ -462,7 +677,6 @@ USE THIS DATA to personalize your response. Focus recommendations on their weak 
     }
 
     let memoryLayerContext = ''
-    const activeFocusTitle = getFocusTaskTitle(currentFocusTask, memoryContext)
     if (memoryContext) {
       const completed = memoryContext.recentCompletedTasks?.slice(-10) || []
       const quizMemory = memoryContext.recentQuizScores?.slice(-8) || []
@@ -479,10 +693,9 @@ USE THIS MEMORY to adjust recommendations:
 - Reinforce weak areas that still show low performance.`
     }
 
-  let appStateContext = ''
-  if (appState && typeof appState === 'object') {
-    const typedAppState = appState as AppStateContext
-    appStateContext = `
+    let appStateContext = ''
+    if (typedAppState) {
+      appStateContext = `
 
 ## LIVE APP STATE:
 - Active Page: ${typedAppState.activePage || 'Unknown'}
@@ -490,25 +703,89 @@ USE THIS MEMORY to adjust recommendations:
 - Completed Tasks: ${typedAppState.completedTasksCount ?? 0}
 - Latest Plan Exam: ${typedAppState.latestPlanExamName || 'None'}
 - Latest Plan Top Topic: ${typedAppState.latestPlanTopTopic || 'None'}
+- Next Pending Task: ${typedAppState.nextPendingTaskTitle || 'None'}
 
 USE THIS STATE in your response:
 - Mention one concrete state item when giving a recommendation.
 - If a focus session is active, continue that task before suggesting a new one.
 - If pending tasks exist, prioritize the top pending task as the next action.
-- If no pending tasks exist, create a small immediate action list.`
-  }
+- If no pending tasks exist, create a small immediate action list.
+- Use explicit subject/task names from this state and context in both message and next step.`
+    }
+
+  const decisionPolicyContext = `
+
+## DECISION PRIORITY POLICY:
+1) If an active focus session exists, continue that task and avoid introducing new actions.
+2) If pending tasks exist, prioritize executing them before creating new tasks or plans.
+3) Suggest creating a new study plan only when no existing plan is available.
+4) If recommendations are repetitive, choose the next pending or plan-linked task instead.
+
+Current Policy State:
+- Active Focus Session: ${decisionPolicy.hasActiveFocus ? decisionPolicy.activeFocusTitle : 'No'}
+- Pending Tasks Count: ${decisionPolicy.pendingTasksCount}
+- Existing Plan Present: ${decisionPolicy.hasExistingPlan ? 'Yes' : 'No'}
+- Priority Pending Task: ${decisionPolicy.nextPendingTaskTitle || 'None'}
+
+Policy Enforcement:
+- Do not return purely informational text.
+- Keep action + next step tightly aligned with this policy.
+- If completed tasks are greater than 0, acknowledge progress briefly (example: You’ve completed 3 out of 5 tasks) and immediately guide the next step.
+- Tone guardrail: if completion or consistency is below 55, be encouraging with a concrete corrective action; if 75 or above, reinforce progress and raise precision.
+- Do not use vague phrases like "keep going" unless tied to a specific subject or task title.`
+
+  const suggestionContextBlock = `
+
+## SUGGESTION CONTINUITY:
+- Last Suggested Action: ${suggestionContext?.lastSuggestedAction || 'None'}
+- Last Suggested Task: ${suggestionContext?.lastSuggestedTaskTitle || 'None'}
+- Suggestion Repeat Streak: ${suggestionContext?.repeatStreak ?? 0}
+- Current Effective Action: ${effectiveAction}
+- Action Rotated This Turn: ${wasActionRotated ? 'Yes' : 'No'}
+
+Anti-repetition rules:
+- Avoid repeating the same next step unless the user explicitly ignored/deferred it.
+- If repeating would occur, rotate to the next meaningful action based on current state.
+- Keep recommendations progressive and context-aware.`
+
+    let actionContinuityContext = ''
+    if (Array.isArray(recentActionHistory) && recentActionHistory.length > 0) {
+      const normalized = recentActionHistory
+        .filter(
+          (item): item is RecentActionContext =>
+            !!item &&
+            typeof item === 'object' &&
+            typeof item.action === 'string' &&
+            typeof item.summary === 'string'
+        )
+        .slice(-3)
+
+      if (normalized.length > 0) {
+        actionContinuityContext = `
+
+## RECENT AGENT ACTIONS:
+${normalized.map((item, index) => `${index + 1}. ${item.action}: ${item.summary}`).join('\n')}
+
+CONTINUITY REQUIREMENT:
+- Continue from the latest action above whenever relevant.
+- Mention exactly one continuity reference in the message when it helps the user act now.`
+      }
+    }
 
     // Build messages array for OpenAI with enhanced context
-    const contextMessage = intent.studyPlan
-      ? '\n\nReturn a JSON object with action="create_plan", a plain text message, and data.plan. Also include data.tasks for immediate execution and data.taskTitle for the first focus task.'
-      : intent.dailyTasks
-        ? '\n\nReturn a JSON object with action="add_tasks", a plain text message, and data.tasks.'
-        : intent.performance
-          ? '\n\nReturn a JSON object with action="update_progress", a plain text message, and data.progress. Include one state-aware next action.'
-          : '\n\nReturn a JSON object with action="ask_question", a plain text message, and a concise question in data.question if details are missing. Mention one concrete, state-aware next step.'
+    const contextMessage =
+      effectiveAction === 'start_focus'
+        ? '\n\nReturn a JSON object with action="start_focus", a plain text message, and data.taskTitle set to the active or top pending task. Guide continuation/completion of concrete work now.'
+        : effectiveAction === 'ask_question'
+          ? '\n\nReturn a JSON object with action="ask_question", a plain text message, and data.question that resolves the next decision while still recommending immediate progress on current work.'
+          : effectiveAction === 'create_plan'
+            ? '\n\nReturn a JSON object with action="create_plan", a plain text message, and data.plan. Also include data.tasks for immediate execution and data.taskTitle for the first focus task.'
+            : effectiveAction === 'add_tasks'
+              ? '\n\nReturn a JSON object with action="add_tasks", a plain text message, and data.tasks. Keep tasks executable now and non-repetitive with recent suggestions.'
+              : '\n\nReturn a JSON object with action="update_progress", a plain text message, and data.progress. Include one concrete next action based on current state.'
 
     const openaiMessages = [
-      { role: 'system', content: SYSTEM_PROMPT + syllabusContext + performanceContext + memoryLayerContext + appStateContext + contextMessage },
+      { role: 'system', content: SYSTEM_PROMPT + syllabusContext + performanceContext + memoryLayerContext + appStateContext + decisionPolicyContext + suggestionContextBlock + actionContinuityContext + contextMessage },
       ...(chatHistory || []).slice(-10).map((msg: { role: string; content: string }) => ({
         role: msg.role,
         content: msg.content

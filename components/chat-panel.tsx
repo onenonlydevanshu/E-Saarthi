@@ -164,6 +164,63 @@ function getAutoInlineActions(content: string): InlineAction[] {
   return actions
 }
 
+function getRecentActionHistory(messages: Array<{ role: 'user' | 'assistant'; content: string }>) {
+  return messages
+    .filter((msg) => msg.role === 'assistant')
+    .map((msg) => parseChatControllerPayload(msg.content))
+    .filter((payload): payload is NonNullable<ReturnType<typeof parseChatControllerPayload>> => !!payload)
+    .slice(-4)
+    .map((payload) => {
+      const plan = payload.data?.plan ?? payload.data?.studyPlan
+      const taskTitle = payload.data?.taskTitle || payload.data?.tasks?.[0] || payload.data?.dailyTasks?.[0]
+      const summary = plan
+        ? `${plan.examName} plan updated`
+        : taskTitle
+          ? `Task context: ${taskTitle}`
+          : payload.message
+      return {
+        action: payload.action || 'ask_question',
+        summary,
+      }
+    })
+}
+
+function getSuggestionContext(messages: Array<{ role: 'user' | 'assistant'; content: string }>) {
+  const assistantPayloads = messages
+    .filter((msg) => msg.role === 'assistant')
+    .map((msg) => parseChatControllerPayload(msg.content))
+    .filter((payload): payload is NonNullable<ReturnType<typeof parseChatControllerPayload>> => !!payload)
+
+  if (assistantPayloads.length === 0) {
+    return {
+      lastSuggestedAction: null,
+      lastSuggestedTaskTitle: null,
+      repeatStreak: 0,
+    }
+  }
+
+  const lastPayload = assistantPayloads[assistantPayloads.length - 1]
+  const lastAction = lastPayload.action || 'ask_question'
+  const lastTaskTitle =
+    lastPayload.data?.taskTitle ||
+    lastPayload.data?.tasks?.[0] ||
+    lastPayload.data?.dailyTasks?.[0] ||
+    null
+
+  let repeatStreak = 0
+  for (let index = assistantPayloads.length - 1; index >= 0; index -= 1) {
+    const action = assistantPayloads[index].action || 'ask_question'
+    if (action !== lastAction) break
+    repeatStreak += 1
+  }
+
+  return {
+    lastSuggestedAction: lastAction,
+    lastSuggestedTaskTitle: lastTaskTitle,
+    repeatStreak,
+  }
+}
+
 export function ChatPanel({ embedded = false }: ChatPanelProps) {
   const {
     chatOpen,
@@ -209,6 +266,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const fullResponseRef = useRef<string>('')
+  const lastAcknowledgedCompletedCountRef = useRef(0)
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -375,6 +433,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
       const pendingTasks = tasks.filter((task) => !task.completed)
       const completedTasksCount = tasks.length - pendingTasks.length
       const latestPlan = studyPlans[studyPlans.length - 1]
+      const recentActionHistory = getRecentActionHistory(messages)
+      const suggestionContext = getSuggestionContext(messages)
       
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -394,7 +454,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
             completedTasksCount,
             latestPlanExamName: latestPlan?.examName,
             latestPlanTopTopic: latestPlan?.schedule?.[0]?.topics?.[0],
+            nextPendingTaskTitle: pendingTasks[0]?.title,
           },
+          recentActionHistory,
+          suggestionContext,
           selectedExamId,
         }),
         signal: abortControllerRef.current.signal,
@@ -488,6 +551,23 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
           setDetectedTasks,
         }
       )
+
+      const allTasks = useAppStore.getState().tasks
+      const latestCompletedTasksCount = allTasks.filter((task) => task.completed).length
+      const latestTotalTasksCount = allTasks.length
+      const nextPendingTask = allTasks.find((task) => !task.completed)?.title
+      const shouldAcknowledgeProgress =
+        latestCompletedTasksCount > 0 &&
+        latestCompletedTasksCount > lastAcknowledgedCompletedCountRef.current
+
+      if (shouldAcknowledgeProgress) {
+        const continuationLine = nextPendingTask
+          ? `Next step: continue with ${nextPendingTask} now.`
+          : 'Next step: complete one more focused task now.'
+        normalizedResponse.message = `${normalizedResponse.message} You’ve completed ${latestCompletedTasksCount} out of ${latestTotalTasksCount} tasks. ${continuationLine}`
+        lastAcknowledgedCompletedCountRef.current = latestCompletedTasksCount
+      }
+
       const messageWithController = `${normalizedResponse.message}\n\n[CHAT_CONTROLLER]\n${JSON.stringify(
         normalizedResponse,
         null,

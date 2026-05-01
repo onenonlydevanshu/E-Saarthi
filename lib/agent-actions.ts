@@ -51,6 +51,14 @@ const DEFAULT_NEXT_STEPS: Record<StructuredChatAction, string> = {
     'Next step: tell me your immediate goal so I can take the right action for you.',
 }
 
+const DEFAULT_ACTION_FEEDBACK: Record<StructuredChatAction, string> = {
+  create_plan: 'Plan generated.',
+  add_tasks: 'Tasks updated.',
+  start_focus: 'Focus activated.',
+  update_progress: 'Progress analyzed.',
+  ask_question: 'I need one detail to proceed.',
+}
+
 // All supported action types the agent can emit
 export type AgentAction =
   | { type: 'navigate'; page: AppPage }
@@ -252,6 +260,123 @@ function ensureNextStepMessage(
   return `${trimmed} ${DEFAULT_NEXT_STEPS[action]}`.trim()
 }
 
+function hasActionFeedback(action: StructuredChatAction, message: string): boolean {
+  const normalized = message.toLowerCase()
+  switch (action) {
+    case 'create_plan':
+      return normalized.includes('plan') && (normalized.includes('created') || normalized.includes('generated') || normalized.includes('ready'))
+    case 'add_tasks':
+      return normalized.includes('task') && (normalized.includes('added') || normalized.includes('updated') || normalized.includes('created'))
+    case 'start_focus':
+      return normalized.includes('focus') && (normalized.includes('started') || normalized.includes('active') || normalized.includes('ready'))
+    case 'update_progress':
+      return normalized.includes('progress') || normalized.includes('accuracy') || normalized.includes('performance')
+    case 'ask_question':
+      return normalized.includes('?') || normalized.includes('need') || normalized.includes('share')
+    default:
+      return false
+  }
+}
+
+function ensureActionFeedbackMessage(
+  action: StructuredChatAction,
+  message: string
+): string {
+  const trimmed = message.trim()
+  if (!trimmed) return DEFAULT_ACTION_FEEDBACK[action]
+  if (hasActionFeedback(action, trimmed)) return trimmed
+  return `${DEFAULT_ACTION_FEEDBACK[action]} ${trimmed}`.trim()
+}
+
+function getPrimaryReference(data?: StructuredChatData): string | null {
+  if (!data) return null
+  const taskReference = data.taskTitle?.trim() || data.tasks?.[0]?.trim()
+  if (taskReference) return taskReference
+
+  const planTopic = data.plan?.schedule?.[0]?.topics?.[0]?.trim()
+  if (planTopic) return planTopic
+
+  const planExam = data.plan?.examName?.trim()
+  if (planExam) return planExam
+
+  const progress = data.progress as Record<string, unknown> | undefined
+  const weakAreas = Array.isArray(progress?.weakAreas)
+    ? progress?.weakAreas.filter((item): item is string => typeof item === 'string')
+    : []
+  return weakAreas[0] || null
+}
+
+function ensureSpecificReferenceMessage(
+  action: StructuredChatAction,
+  message: string,
+  data?: StructuredChatData
+): string {
+  const trimmed = message.trim()
+  const reference = getPrimaryReference(data)
+  if (!reference) return trimmed
+  if (trimmed.toLowerCase().includes(reference.toLowerCase())) return trimmed
+
+  if (action === 'start_focus') {
+    return `${trimmed} Focus target: ${reference}.`
+  }
+
+  return `${trimmed} Priority focus: ${reference}.`
+}
+
+function ensureProgressToneMessage(
+  action: StructuredChatAction,
+  message: string,
+  data?: StructuredChatData
+): string {
+  if (action !== 'update_progress') return message
+
+  const progress = data?.progress as Record<string, unknown> | undefined
+  const completion = typeof progress?.taskCompletionRate === 'number' ? progress.taskCompletionRate : null
+  const consistency = typeof progress?.studyConsistency === 'number' ? progress.studyConsistency : null
+  const accuracy = typeof progress?.overallAccuracy === 'number' ? progress.overallAccuracy : null
+
+  const lowered = message.toLowerCase()
+  if (lowered.includes('consistency') || lowered.includes('on track') || lowered.includes('behind')) {
+    return message
+  }
+
+  if (
+    (completion !== null && completion < 55) ||
+    (consistency !== null && consistency < 55) ||
+    (accuracy !== null && accuracy < 60)
+  ) {
+    return `${message} You are behind on consistency, so focus on one high-impact weak-area task now.`
+  }
+
+  if (
+    (completion !== null && completion >= 75) &&
+    (consistency !== null && consistency >= 75)
+  ) {
+    return `${message} Your consistency is strong, so reinforce it with one targeted task next.`
+  }
+
+  return `${message} Your progress is steady, so lock in one specific task next.`
+}
+
+function replaceGenericEncouragement(message: string, data?: StructuredChatData): string {
+  const reference = getPrimaryReference(data)
+  if (!reference) return message
+
+  return message
+    .replace(/\bkeep going\b/gi, `continue with ${reference}`)
+    .replace(/\bstay consistent\b/gi, `stay consistent on ${reference}`)
+}
+
+function personalizeMessage(
+  action: StructuredChatAction,
+  message: string,
+  data?: StructuredChatData
+): string {
+  const specific = ensureSpecificReferenceMessage(action, message, data)
+  const toned = ensureProgressToneMessage(action, specific, data)
+  return replaceGenericEncouragement(toned, data)
+}
+
 function makeMessageConcise(message: string): string {
   const collapsed = message.replace(/\s+/g, ' ').trim()
   const sentenceParts = collapsed
@@ -434,7 +559,14 @@ export function normalizeStructuredChatResponse(
     const normalizedMessage = makeMessageConcise(
       ensureNextStepMessage(
         action,
-        message || 'I need a little more information to continue.',
+        personalizeMessage(
+          action,
+          ensureActionFeedbackMessage(
+            action,
+            message || 'I need a little more information to continue.'
+          ),
+          normalizedData
+        ),
         normalizedData
       )
     )
@@ -451,7 +583,15 @@ export function normalizeStructuredChatResponse(
       'I need a little more information to continue.'
     return {
       action: 'ask_question',
-      message: makeMessageConcise(ensureNextStepMessage('ask_question', fallback)),
+      message: makeMessageConcise(
+        ensureNextStepMessage(
+          'ask_question',
+          personalizeMessage(
+            'ask_question',
+            ensureActionFeedbackMessage('ask_question', fallback)
+          )
+        )
+      ),
       data: {},
     }
   }
@@ -772,7 +912,15 @@ export function handleStructuredChatResponse(
   }
 
   response.message = makeMessageConcise(
-    ensureNextStepMessage(response.action, response.message, response.data)
+    ensureNextStepMessage(
+      response.action,
+      personalizeMessage(
+        response.action,
+        ensureActionFeedbackMessage(response.action, response.message),
+        response.data
+      ),
+      response.data
+    )
   )
 
   if (response.data?.plan) {
