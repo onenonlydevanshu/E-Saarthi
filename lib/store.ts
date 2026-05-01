@@ -195,7 +195,7 @@ export const useAppStore = create<AppState>()(
       // Sidebar
       sidebarOpen: true,
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
-      activePage: 'dashboard',
+      activePage: 'chat',
       setActivePage: (page) => set({ activePage: page }),
 
       // Chat

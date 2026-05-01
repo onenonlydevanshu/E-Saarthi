@@ -1,33 +1,14 @@
 'use client'
 
-import { memo, Suspense, lazy, useMemo } from 'react'
+import { memo, useState } from 'react'
 import { useAppStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
 import { Sidebar } from '@/components/sidebar'
 import { ChatPanel } from '@/components/chat-panel'
+import { RightPanel } from '@/components/right-panel'
 import { TopSummaryBar } from '@/components/top-summary-bar'
-import { Menu, GraduationCap } from 'lucide-react'
+import { Menu, GraduationCap, Sparkles, MessageSquare, LayoutPanelLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { DashboardSkeleton } from '@/components/loading-skeleton'
-
-// Lazy load page components for better code splitting
-const DashboardPage = lazy(() => import('@/components/pages/dashboard').then(m => ({ default: m.DashboardPage })))
-const StudyPlannerPage = lazy(() => import('@/components/pages/study-planner').then(m => ({ default: m.StudyPlannerPage })))
-const DailyTasksPage = lazy(() => import('@/components/pages/daily-tasks').then(m => ({ default: m.DailyTasksPage })))
-const UpcomingExamsPage = lazy(() => import('@/components/pages/upcoming-exams').then(m => ({ default: m.UpcomingExamsPage })))
-const MockTestsPage = lazy(() => import('@/components/pages/mock-tests').then(m => ({ default: m.MockTestsPage })))
-const ProgressTrackerPage = lazy(() => import('@/components/pages/progress-tracker').then(m => ({ default: m.ProgressTrackerPage })))
-const FocusModePage = lazy(() => import('@/components/pages/focus-mode').then(m => ({ default: m.FocusModePage })))
-
-const pages: Record<string, React.LazyExoticComponent<React.ComponentType>> = {
-  dashboard: DashboardPage,
-  'study-planner': StudyPlannerPage,
-  'daily-tasks': DailyTasksPage,
-  'upcoming-exams': UpcomingExamsPage,
-  'mock-tests': MockTestsPage,
-  progress: ProgressTrackerPage,
-  'focus-mode': FocusModePage,
-}
 
 // Memoized Mobile Header component
 const MobileHeader = memo(function MobileHeader({ 
@@ -64,24 +45,11 @@ const MobileHeader = memo(function MobileHeader({
   )
 })
 
-// Page loading fallback
-function PageLoadingFallback() {
-  return (
-    <div className="animate-fade-in">
-      <DashboardSkeleton />
-    </div>
-  )
-}
-
 export function AppLayout() {
-  const { sidebarOpen, setSidebarOpen, activePage, chatOpen } = useAppStore()
+  const { sidebarOpen, setSidebarOpen } = useAppStore()
+  const [mobileView, setMobileView] = useState<'chat' | 'panels'>('chat')
 
-  const ActivePage = useMemo(() => pages[activePage] || DashboardPage, [activePage])
-
-  const handleToggleSidebar = useMemo(
-    () => () => setSidebarOpen(!sidebarOpen),
-    [setSidebarOpen, sidebarOpen]
-  )
+  const handleToggleSidebar = () => setSidebarOpen(!sidebarOpen)
 
   return (
     <div className="min-h-screen bg-background">
@@ -115,20 +83,59 @@ export function AppLayout() {
         className={cn(
           'min-h-screen transition-all duration-400 ease-out',
           'pt-16 lg:pt-0',
-          sidebarOpen ? 'lg:ml-72' : 'lg:ml-[76px]',
-          chatOpen ? 'lg:mr-[440px]' : ''
+          sidebarOpen ? 'lg:ml-[220px]' : 'lg:ml-[76px]'
         )}
       >
-        <div className="p-4 sm:p-6 lg:p-8 xl:p-10 max-w-[1600px] mx-auto">
+        <div className="p-4 sm:p-6 lg:p-8 xl:p-10 max-w-[1800px] mx-auto space-y-6">
           <TopSummaryBar />
-          <Suspense fallback={<PageLoadingFallback />}>
-            <ActivePage />
-          </Suspense>
+
+          <div className="lg:hidden flex items-center gap-2 rounded-2xl border border-border/50 bg-card/85 p-1">
+            <Button
+              variant={mobileView === 'chat' ? 'default' : 'ghost'}
+              onClick={() => setMobileView('chat')}
+              className="flex-1 rounded-xl gap-2"
+            >
+              <MessageSquare className="w-4 h-4" />
+              Chat
+            </Button>
+            <Button
+              variant={mobileView === 'panels' ? 'default' : 'ghost'}
+              onClick={() => setMobileView('panels')}
+              className="flex-1 rounded-xl gap-2"
+            >
+              <LayoutPanelLeft className="w-4 h-4" />
+              Panels
+            </Button>
+          </div>
+
+          <section className="space-y-6 xl:grid xl:grid-cols-[minmax(0,1.9fr)_minmax(360px,1fr)] xl:gap-6 items-start">
+            <div className={cn('space-y-4', mobileView === 'panels' ? 'hidden xl:block' : 'block xl:block')}>
+              <div className="flex items-center gap-3 px-1">
+                <div className="flex items-center justify-center w-10 h-10 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/20">
+                  <Sparkles className="w-5 h-5 text-primary" />
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground font-semibold">
+                    Central Controller
+                  </p>
+                  <h2 className="text-xl font-bold text-foreground">
+                    AI Exam Coach
+                  </h2>
+                  <p className="text-sm text-muted-foreground">
+                    Chat drives plans, tasks, focus, and progress.
+                  </p>
+                </div>
+              </div>
+
+              <ChatPanel embedded />
+            </div>
+
+            <div className={cn('space-y-4', mobileView === 'chat' ? 'hidden xl:block' : 'block xl:block')}>
+              <RightPanel />
+            </div>
+          </section>
         </div>
       </main>
-
-      {/* Chat Panel */}
-      <ChatPanel />
     </div>
   )
 }

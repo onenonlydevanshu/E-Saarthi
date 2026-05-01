@@ -38,6 +38,19 @@ export interface StructuredChatResponse {
   data?: StructuredChatData
 }
 
+const DEFAULT_NEXT_STEPS: Record<StructuredChatAction, string> = {
+  create_plan:
+    'Next step: add today\'s plan tasks and start a 25-minute focus session on the first topic.',
+  add_tasks:
+    'Next step: start a focus session on the first task and then mark it complete.',
+  start_focus:
+    'Next step: stay in Focus Mode for one full 25-minute session before switching tasks.',
+  update_progress:
+    'Next step: pick one weak area and schedule a focused practice block today.',
+  ask_question:
+    'Next step: tell me your immediate goal so I can take the right action for you.',
+}
+
 // All supported action types the agent can emit
 export type AgentAction =
   | { type: 'navigate'; page: AppPage }
@@ -163,6 +176,7 @@ export interface AgentActionExecutorDeps {
   setTheme: (theme: 'light' | 'dark') => void
   setChatOpen: (open: boolean) => void
   getTasks: () => Array<{ id: string; title: string; completed: boolean }>
+  setShowFocusPrompt?: (value: boolean) => void
 }
 
 export interface ExecutedAction {
@@ -196,6 +210,72 @@ export interface ChatControllerPayload {
   data?: ChatControllerData
 }
 
+export interface StructuredChatResponseResult {
+  response: StructuredChatResponse
+  executedActions: ExecutedAction[]
+}
+
+export interface StructuredChatResponseHandlerDeps extends AgentActionExecutorDeps {
+  setDetectedPlan?: (plan: StructuredChatData['plan'] | null) => void
+  setDetectedTasks?: (tasks: string[] | null) => void
+}
+
+function hasNextStepSuggestion(message: string): boolean {
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('next step:') ||
+    normalized.includes('next,') ||
+    normalized.includes('you should') ||
+    normalized.includes('start with')
+  )
+}
+
+function ensureNextStepMessage(
+  action: StructuredChatAction,
+  message: string,
+  data?: StructuredChatData
+): string {
+  const trimmed = message.trim()
+  if (hasNextStepSuggestion(trimmed)) return trimmed
+
+  if (action === 'start_focus' && data?.taskTitle) {
+    return `${trimmed} Next step: start the timer for "${data.taskTitle}" now.`
+  }
+
+  if (action === 'create_plan') {
+    const firstPlanTask = data?.plan?.schedule?.[0]?.topics?.[0]
+    if (firstPlanTask) {
+      return `${trimmed} Next step: begin with "${firstPlanTask}" and launch Focus Mode.`
+    }
+  }
+
+  return `${trimmed} ${DEFAULT_NEXT_STEPS[action]}`.trim()
+}
+
+function makeMessageConcise(message: string): string {
+  const collapsed = message.replace(/\s+/g, ' ').trim()
+  const sentenceParts = collapsed
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+
+  const twoSentenceMessage = sentenceParts.slice(0, 2).join(' ').trim() || collapsed
+  if (twoSentenceMessage.length <= 220) return twoSentenceMessage
+  return `${twoSentenceMessage.slice(0, 217).trimEnd()}...`
+}
+
+function deriveTasksFromPlan(plan: StructuredChatData['plan']): string[] {
+  if (!plan?.schedule?.length) return []
+
+  return plan.schedule
+    .slice(0, 2)
+    .flatMap((day) =>
+      (day.topics || []).slice(0, 2).map((topic) => `Day ${day.day}: ${topic}`)
+    )
+    .filter(Boolean)
+    .slice(0, 6)
+}
+
 function isStructuredChatAction(value: unknown): value is StructuredChatAction {
   return (
     value === 'create_plan' ||
@@ -210,23 +290,41 @@ function normalizeText(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value.trim() : fallback
 }
 
+function parseMaybeJson(value: unknown): unknown {
+  if (typeof value !== 'string') return value
+  const trimmed = value.trim()
+  if (!trimmed) return value
+  if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return value
+
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    return value
+  }
+}
+
 function normalizeStructuredData(data: unknown): StructuredChatData {
-  if (!data || typeof data !== 'object') {
+  const parsedData = parseMaybeJson(data)
+  if (!parsedData || typeof parsedData !== 'object') {
     return {}
   }
 
-  const raw = data as Record<string, unknown>
+  const raw = parsedData as Record<string, unknown>
+  const parsedPlan = parseMaybeJson(raw.plan)
+  const parsedStudyPlan = parseMaybeJson(raw.studyPlan)
+  const parsedTasks = parseMaybeJson(raw.tasks)
+  const parsedDailyTasks = parseMaybeJson(raw.dailyTasks)
   const plan =
-    raw.plan && typeof raw.plan === 'object'
-      ? (raw.plan as StructuredChatData['plan'])
-      : raw.studyPlan && typeof raw.studyPlan === 'object'
-        ? (raw.studyPlan as StructuredChatData['plan'])
+    parsedPlan && typeof parsedPlan === 'object'
+      ? (parsedPlan as StructuredChatData['plan'])
+      : parsedStudyPlan && typeof parsedStudyPlan === 'object'
+        ? (parsedStudyPlan as StructuredChatData['plan'])
         : undefined
 
-  const tasks = Array.isArray(raw.tasks)
-    ? raw.tasks.filter((task): task is string => typeof task === 'string')
-    : Array.isArray(raw.dailyTasks)
-      ? raw.dailyTasks.filter((task): task is string => typeof task === 'string')
+  const tasks = Array.isArray(parsedTasks)
+    ? parsedTasks.filter((task): task is string => typeof task === 'string')
+    : Array.isArray(parsedDailyTasks)
+      ? parsedDailyTasks.filter((task): task is string => typeof task === 'string')
       : undefined
 
   const taskTitle = normalizeText(raw.taskTitle ?? raw.focusTask ?? tasks?.[0], '')
@@ -245,6 +343,48 @@ function normalizeStructuredData(data: unknown): StructuredChatData {
     ...(taskTitle ? { taskTitle } : {}),
     ...(progress ? { progress } : {}),
     ...(question ? { question } : {}),
+  }
+}
+
+function normalizeTaskTitle(taskTitle: string): string {
+  return taskTitle.trim()
+}
+
+export function startFocusSession(
+  taskTitle: string,
+  deps: AgentActionExecutorDeps
+): { taskTitle: string; taskId: string | null } | null {
+  const normalizedTitle = normalizeTaskTitle(taskTitle)
+  if (!normalizedTitle) return null
+
+  const existingTask = deps
+    .getTasks()
+    .find((task) => !task.completed && task.title.trim() === normalizedTitle)
+
+  if (!existingTask) {
+    deps.addTask({ title: normalizedTitle, completed: false })
+  }
+
+  const selectedTask =
+    deps
+      .getTasks()
+      .find((task) => !task.completed && task.title.trim() === normalizedTitle) ??
+    existingTask
+
+  const taskId = selectedTask?.id ?? null
+  deps.setCurrentFocusTask(
+    taskId
+      ? { id: taskId, title: selectedTask?.title ?? normalizedTitle }
+      : { id: `focus-${Date.now()}`, title: normalizedTitle }
+  )
+  deps.setFocusAutoStart(true)
+  deps.setActivePage('focus-mode')
+  deps.setShowFocusPrompt?.(false)
+  deps.setChatOpen(false)
+
+  return {
+    taskTitle: normalizedTitle,
+    taskId,
   }
 }
 
@@ -276,6 +416,7 @@ export function normalizeStructuredChatResponse(
   content: string
 ): StructuredChatResponse {
   const candidate = extractJsonCandidate(content)
+  const fallbackMessage = normalizeText(stripAgentActions(content), '')
 
   try {
     const parsed = JSON.parse(candidate) as Partial<StructuredChatResponse> & {
@@ -284,19 +425,33 @@ export function normalizeStructuredChatResponse(
     const action = isStructuredChatAction(parsed.action)
       ? parsed.action
       : 'ask_question'
-    const message = normalizeText(parsed.message, normalizeText(content, ''))
+    const message = normalizeText(
+      parsed.message,
+      fallbackMessage || normalizeText(content, '')
+    )
+
+    const normalizedData = normalizeStructuredData(parsed.data)
+    const normalizedMessage = makeMessageConcise(
+      ensureNextStepMessage(
+        action,
+        message || 'I need a little more information to continue.',
+        normalizedData
+      )
+    )
 
     return {
       action,
-      message: message || 'I need a little more information to continue.',
-      data: normalizeStructuredData(parsed.data),
+      message: normalizedMessage,
+      data: normalizedData,
     }
   } catch {
+    const fallback =
+      fallbackMessage ||
+      normalizeText(candidate, '') ||
+      'I need a little more information to continue.'
     return {
       action: 'ask_question',
-      message:
-        normalizeText(candidate, '') ||
-        'I need a little more information to continue.',
+      message: makeMessageConcise(ensureNextStepMessage('ask_question', fallback)),
       data: {},
     }
   }
@@ -392,27 +547,13 @@ export function executeAgentAction(
       }
 
       case 'start_focus': {
-        deps.addTask({ title: action.taskTitle, completed: false })
-        // Find the newly added task to attach the focus session to it,
-        // navigate to the page, close the chat, and arm the auto-start
-        // flag so the Pomodoro timer kicks off the moment the page mounts.
-        setTimeout(() => {
-          const newTask = deps
-            .getTasks()
-            .find((t) => t.title === action.taskTitle && !t.completed)
-          deps.setCurrentFocusTask(
-            newTask
-              ? { id: newTask.id, title: newTask.title }
-              : { id: `focus-${Date.now()}`, title: action.taskTitle }
-          )
-          deps.setActivePage('focus-mode')
-          deps.setChatOpen(false)
-          deps.setFocusAutoStart(true)
-        }, 50)
+        const focusResult = startFocusSession(action.taskTitle, deps)
         return {
           action,
           status: 'success',
-          message: `Starting focus timer: ${action.taskTitle}`,
+          message: focusResult
+            ? `Active task set: ${focusResult.taskTitle}. Focus timer started.`
+            : `Unable to start focus for task: ${action.taskTitle}`,
         }
       }
 
@@ -449,7 +590,7 @@ export function executeAgentAction(
       }
 
       case 'show_focus_prompt': {
-        // Handled separately in chat panel via UI state
+        deps.setShowFocusPrompt?.(true)
         return {
           action,
           status: 'success',
@@ -556,7 +697,12 @@ export function executeStructuredChatResponse(
     case 'create_plan': {
       const plan = payload.data?.plan
       if (!plan) return []
-      return [
+      const derivedTasks =
+        payload.data?.tasks && payload.data.tasks.length > 0
+          ? payload.data.tasks
+          : deriveTasksFromPlan(plan)
+
+      const actions: ExecutedAction[] = [
         executeAgentAction(
           {
             type: 'add_study_plan',
@@ -567,8 +713,17 @@ export function executeStructuredChatResponse(
           },
           deps
         ),
-        executeAgentAction({ type: 'navigate', page: 'study-planner' }, deps),
       ]
+
+      if (derivedTasks.length > 0) {
+        actions.push(
+          executeAgentAction({ type: 'add_tasks', titles: derivedTasks }, deps)
+        )
+      }
+
+      actions.push(executeAgentAction({ type: 'navigate', page: 'study-planner' }, deps))
+
+      return actions
     }
 
     case 'add_tasks': {
@@ -596,6 +751,46 @@ export function executeStructuredChatResponse(
     default:
       return []
   }
+}
+
+export function handleStructuredChatResponse(
+  content: string,
+  deps: StructuredChatResponseHandlerDeps
+): StructuredChatResponseResult {
+  const response = normalizeStructuredChatResponse(content)
+  if (response.action === 'create_plan' && response.data?.plan) {
+    const autoTasks =
+      response.data.tasks && response.data.tasks.length > 0
+        ? response.data.tasks
+        : deriveTasksFromPlan(response.data.plan)
+    response.data = {
+      ...response.data,
+      tasks: autoTasks,
+      taskTitle:
+        response.data.taskTitle || autoTasks[0] || response.data.plan.schedule?.[0]?.topics?.[0],
+    }
+  }
+
+  response.message = makeMessageConcise(
+    ensureNextStepMessage(response.action, response.message, response.data)
+  )
+
+  if (response.data?.plan) {
+    deps.setDetectedPlan?.(response.data.plan)
+  }
+
+  if (response.data?.tasks?.length) {
+    deps.setDetectedTasks?.(response.data.tasks)
+  }
+
+  const executedActions = executeStructuredChatResponse(response, deps)
+
+  if (response.action === 'ask_question' && response.data?.question) {
+    deps.setDetectedPlan?.(null)
+    deps.setDetectedTasks?.(null)
+  }
+
+  return { response, executedActions }
 }
 
 /**

@@ -3,29 +3,25 @@
 import { useAppStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
 import {
-  LayoutDashboard,
+  MessageSquare,
   CalendarDays,
   ListTodo,
-  ClipboardList,
-  FileQuestion,
   BarChart3,
-  Timer,
   Moon,
   Sun,
   ChevronLeft,
   ChevronRight,
   GraduationCap,
+  LogOut,
+  User2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 const navItems = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, description: 'Overview & stats' },
+  { id: 'chat', label: 'Chat', icon: MessageSquare, description: 'AI controller' },
   { id: 'study-planner', label: 'Study Planner', icon: CalendarDays, description: 'Plan your schedule' },
   { id: 'daily-tasks', label: 'Daily Tasks', icon: ListTodo, description: 'Today\'s to-do list' },
-  { id: 'upcoming-exams', label: 'Upcoming Exams', icon: ClipboardList, description: 'Exam calendar' },
-  { id: 'mock-tests', label: 'Mock Tests', icon: FileQuestion, description: 'Practice quizzes' },
-  { id: 'progress', label: 'Progress Tracker', icon: BarChart3, description: 'Your analytics' },
-  { id: 'focus-mode', label: 'Focus Mode', icon: Timer, description: 'Pomodoro timer' },
+  { id: 'progress-tracker', label: 'Progress Tracker', icon: BarChart3, description: 'Your analytics' },
 ]
 
 export function Sidebar() {
@@ -39,7 +35,7 @@ export function Sidebar() {
         'flex flex-col',
         'shadow-[4px_0_32px_rgba(0,0,0,0.04)]',
         'dark:shadow-[4px_0_32px_rgba(0,0,0,0.25)]',
-        sidebarOpen ? 'w-72' : 'w-[76px]'
+        sidebarOpen ? 'w-[220px]' : 'w-[76px]'
       )}
     >
       {/* Logo */}
@@ -61,7 +57,7 @@ export function Sidebar() {
             'text-primary-foreground shadow-lg shadow-primary/30',
             'transition-all duration-300',
             'hover:shadow-xl hover:shadow-primary/40 hover:scale-105',
-            sidebarOpen ? 'w-12 h-12' : 'w-11 h-11'
+            sidebarOpen ? 'w-11 h-11' : 'w-11 h-11'
           )}
         >
           <GraduationCap
@@ -171,6 +167,18 @@ export function Sidebar() {
         'border-t border-sidebar-border/50 space-y-2',
         sidebarOpen ? 'p-4' : 'p-3'
       )}>
+        <div className={cn('rounded-2xl border border-sidebar-border/50 bg-background/40 p-3', sidebarOpen ? 'block' : 'hidden')}>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <User2 className="w-5 h-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-sidebar-foreground truncate">Student</p>
+              <p className="text-[11px] text-muted-foreground truncate">AI-powered study workspace</p>
+            </div>
+          </div>
+        </div>
+
         {/* Theme Toggle */}
         <button
           onClick={toggleTheme}
@@ -225,6 +233,19 @@ export function Sidebar() {
               <ChevronRight className="w-4 h-4" />
             )}
           </div>
+        </Button>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => window.location.reload()}
+          className={cn(
+            'w-full rounded-2xl h-12 justify-between transition-all duration-250',
+            !sidebarOpen && 'justify-center px-0'
+          )}
+        >
+          {sidebarOpen && <span className="text-sm font-medium">Logout</span>}
+          <LogOut className="w-4 h-4" />
         </Button>
       </div>
     </aside>

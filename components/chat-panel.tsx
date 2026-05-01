@@ -37,10 +37,9 @@ import { getAllExams, getSyllabusById } from '@/lib/syllabus-data'
 import {
   parseChatControllerPayload,
   stripAgentActions,
-  executeAgentAction,
-  executeStructuredChatResponse,
+  handleStructuredChatResponse,
+  startFocusSession,
   type ExecutedAction,
-  type AgentAction,
 } from '@/lib/agent-actions'
 
 // Keywords that trigger Focus Mode activation
@@ -75,9 +74,13 @@ const QUICK_ACTIONS = [
 
 // Inline action button types
 interface InlineAction {
-  type: 'focus' | 'add-task' | 'add-plan' | 'modify' | 'regenerate-plan' | 'view'
+  type: 'focus' | 'add-task' | 'add-tasks' | 'add-plan' | 'modify' | 'regenerate-plan' | 'view'
   label: string
   data?: string
+}
+
+interface ChatPanelProps {
+  embedded?: boolean
 }
 
 // Parse inline actions from message content
@@ -94,6 +97,7 @@ function parseInlineActions(content: string): { cleanContent: string; actions: I
     const labels: Record<string, string> = {
       'focus': 'Start Focus',
       'add-task': 'Add to Tasks',
+      'add-tasks': 'Add Tasks',
       'add-plan': 'Add to Planner',
       'modify': 'Regenerate Plan',
       'regenerate-plan': 'Regenerate Plan',
@@ -114,20 +118,53 @@ function getAutoInlineActions(content: string): InlineAction[] {
   const payload = parseChatControllerPayload(content)
   if (!payload?.data) return []
 
+  const actions: InlineAction[] = []
   const tasks = payload.data.tasks ?? payload.data.dailyTasks ?? []
-  const focusTask = payload.data.taskTitle || tasks[0]
-  if (!focusTask) return []
+  const plan = payload.data.plan ?? payload.data.studyPlan
 
-  return [
-    {
+  if (tasks.length === 1) {
+    actions.push({
+      type: 'add-task',
+      label: 'Add Task',
+      data: tasks[0],
+    })
+  } else if (tasks.length > 1) {
+    actions.push({
+      type: 'add-tasks',
+      label: `Add ${tasks.length} Tasks`,
+      data: JSON.stringify(tasks),
+    })
+  }
+
+  const focusTask = payload.data.taskTitle || tasks[0]
+  if (focusTask) {
+    actions.push({
       type: 'focus',
       label: 'Start Focus',
       data: focusTask,
-    },
-  ]
+    })
+  }
+
+  if (plan) {
+    actions.push({
+      type: 'add-plan',
+      label: 'Add to Planner',
+      data: plan.examName,
+    })
+  }
+
+  if (payload.action === 'update_progress') {
+    actions.push({
+      type: 'view',
+      label: 'Open Progress',
+      data: 'progress',
+    })
+  }
+
+  return actions
 }
 
-export function ChatPanel() {
+export function ChatPanel({ embedded = false }: ChatPanelProps) {
   const {
     chatOpen,
     setChatOpen,
@@ -146,6 +183,10 @@ export function ChatPanel() {
     getPerformanceData,
     getMemoryContext,
     adaptiveInsights,
+    activePage,
+    tasks,
+    studyPlans,
+    currentFocusTask,
     setCurrentFocusTask,
     setFocusAutoStart,
     selectedExamId,
@@ -216,23 +257,25 @@ export function ChatPanel() {
   }
 
   const handleStartFocusOnTask = (taskTitle: string, keepChatOpen = false) => {
-    // Create a temporary ID for the task
-    const tempId = `focus-${Date.now()}`
-    // First add the task to the list
-    addTask({ title: taskTitle, completed: false })
-    // Get the newly created task and set it as focus
-    setTimeout(() => {
-      const state = useAppStore.getState()
-      const newTask = state.tasks.find(t => t.title === taskTitle && !t.completed)
-      if (newTask) {
-        setCurrentFocusTask({ id: newTask.id, title: newTask.title })
-      } else {
-        setCurrentFocusTask({ id: tempId, title: taskTitle })
-      }
-      setFocusAutoStart(true)
-      setActivePage('focus-mode')
-      if (!keepChatOpen) setChatOpen(false)
-    }, 100)
+    const started = startFocusSession(taskTitle, {
+      setActivePage,
+      addTask,
+      toggleTask,
+      clearTasks,
+      addStudyPlan,
+      setCurrentFocusTask,
+      setFocusAutoStart,
+      setSelectedExamId,
+      addExam,
+      setTheme,
+      setChatOpen,
+      getTasks: () => useAppStore.getState().tasks,
+      setShowFocusPrompt,
+    })
+
+    if (!started) return
+
+    if (!keepChatOpen) setChatOpen(false)
   }
 
   // Handle inline action buttons
@@ -250,6 +293,22 @@ export function ChatPanel() {
             role: 'assistant',
             content: `Added "${action.data}" to your Daily Tasks.`
           })
+        }
+        break
+      case 'add-tasks':
+        if (action.data) {
+          try {
+            const tasks = JSON.parse(action.data) as string[]
+            tasks.filter(Boolean).forEach((task) => {
+              addTask({ title: task, completed: false })
+            })
+            addMessage({
+              role: 'assistant',
+              content: `Added ${tasks.length} tasks to your Daily Tasks.`
+            })
+          } catch {
+            addTask({ title: action.data, completed: false })
+          }
         }
         break
       case 'add-plan':
@@ -273,67 +332,13 @@ export function ChatPanel() {
         } else if (action.data === 'planner') {
           setActivePage('study-planner')
           setChatOpen(false)
+        } else if (action.data === 'progress') {
+          setActivePage('progress-tracker')
+          setChatOpen(false)
         }
         break
     }
   }
-
-  // Execute structured agent actions emitted by the AI
-  const runAgentActions = useCallback(
-    (actions: AgentAction[]) => {
-      if (!actions || actions.length === 0) return []
-
-      const deps = {
-        setActivePage,
-        addTask,
-        toggleTask,
-        clearTasks,
-        addStudyPlan,
-        setCurrentFocusTask,
-        setFocusAutoStart,
-        setSelectedExamId,
-        addExam,
-        setTheme,
-        setChatOpen,
-        getTasks: () => useAppStore.getState().tasks,
-      }
-
-      const executed: ExecutedAction[] = []
-      for (const action of actions) {
-        // Special-case the focus prompt UI state
-        if (action.type === 'show_focus_prompt') {
-          setShowFocusPrompt(true)
-          executed.push({
-            action,
-            status: 'success',
-            message: 'Suggested Focus Mode',
-          })
-          continue
-        }
-        executed.push(executeAgentAction(action, deps))
-      }
-
-      if (executed.length > 0) {
-        setRecentlyExecuted(executed)
-        // Auto-clear executed actions list after a short delay
-        setTimeout(() => setRecentlyExecuted([]), 6000)
-      }
-      return actions
-    },
-    [
-      setActivePage,
-      addTask,
-      toggleTask,
-      clearTasks,
-      addStudyPlan,
-      setCurrentFocusTask,
-      setFocusAutoStart,
-      setSelectedExamId,
-      addExam,
-      setTheme,
-      setChatOpen,
-    ]
-  )
 
   const handleRegeneratePlan = (context?: string) => {
     const suffix = context ? ` for ${context}` : ''
@@ -367,6 +372,9 @@ export function ChatPanel() {
       // Get performance data for adaptive responses
       const performanceData = getPerformanceData()
       const memoryContext = getMemoryContext()
+      const pendingTasks = tasks.filter((task) => !task.completed)
+      const completedTasksCount = tasks.length - pendingTasks.length
+      const latestPlan = studyPlans[studyPlans.length - 1]
       
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -379,6 +387,14 @@ export function ChatPanel() {
             recentInsights: adaptiveInsights,
           },
           memoryContext,
+          currentFocusTask,
+          appState: {
+            activePage,
+            pendingTasksCount: pendingTasks.length,
+            completedTasksCount,
+            latestPlanExamName: latestPlan?.examName,
+            latestPlanTopTopic: latestPlan?.schedule?.[0]?.topics?.[0],
+          },
           selectedExamId,
         }),
         signal: abortControllerRef.current.signal,
@@ -396,15 +412,20 @@ export function ChatPanel() {
 
       const decoder = new TextDecoder()
       let shouldShowFocus = false
+      let pendingSseBuffer = ''
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
-        const chunk = decoder.decode(value)
-        const lines = chunk.split('\n').filter(line => line.trim() !== '')
+        pendingSseBuffer += decoder.decode(value, { stream: true })
+        const lines = pendingSseBuffer.split('\n')
+        pendingSseBuffer = lines.pop() ?? ''
 
-        for (const line of lines) {
+        for (const rawLine of lines) {
+          const line = rawLine.trim()
+          if (!line) continue
+
           if (line.startsWith('data: ')) {
             const data = line.slice(6)
             if (data === '[DONE]') {
@@ -419,7 +440,7 @@ export function ChatPanel() {
                 if (parsed.intent.focus) shouldShowFocus = true
                 continue
               }
-              
+
               if (parsed.content) {
                 fullResponseRef.current += parsed.content
               }
@@ -430,10 +451,26 @@ export function ChatPanel() {
         }
       }
 
-      const controllerPayload = parseChatControllerPayload(fullResponseRef.current)
-      if (controllerPayload) {
-        updateLastMessage(controllerPayload.message)
-        const executedActions = executeStructuredChatResponse(controllerPayload, {
+      const trailingLine = pendingSseBuffer.trim()
+      if (trailingLine.startsWith('data: ')) {
+        const data = trailingLine.slice(6)
+        if (data !== '[DONE]') {
+          try {
+            const parsed = JSON.parse(data)
+            if (parsed.meta && parsed.intent) {
+              if (parsed.intent.focus) shouldShowFocus = true
+            } else if (parsed.content) {
+              fullResponseRef.current += parsed.content
+            }
+          } catch {
+            // Ignore malformed trailing line
+          }
+        }
+      }
+
+      const { response: normalizedResponse, executedActions } = handleStructuredChatResponse(
+        fullResponseRef.current,
+        {
           setActivePage,
           addTask,
           toggleTask,
@@ -446,17 +483,21 @@ export function ChatPanel() {
           setTheme,
           setChatOpen,
           getTasks: () => useAppStore.getState().tasks,
-        })
-
-        if (controllerPayload.action === 'ask_question' && controllerPayload.data?.question) {
-          setDetectedPlan(null)
-          setDetectedTasks(null)
+          setShowFocusPrompt,
+          setDetectedPlan,
+          setDetectedTasks,
         }
+      )
+      const messageWithController = `${normalizedResponse.message}\n\n[CHAT_CONTROLLER]\n${JSON.stringify(
+        normalizedResponse,
+        null,
+        2
+      )}\n[/CHAT_CONTROLLER]`
+      updateLastMessage(messageWithController)
 
-        if (executedActions.length > 0) {
-          setRecentlyExecuted(executedActions)
-          setTimeout(() => setRecentlyExecuted([]), 6000)
-        }
+      if (executedActions.length > 0) {
+        setRecentlyExecuted(executedActions)
+        setTimeout(() => setRecentlyExecuted([]), 6000)
       }
 
       // Fallback: if the AI didn't emit show_focus_prompt but the user
@@ -504,7 +545,7 @@ export function ChatPanel() {
   return (
     <>
       {/* Floating Chat Button */}
-      {!chatOpen && (
+      {!embedded && !chatOpen && (
         <div className="fixed bottom-8 right-8 z-50 group">
           {/* Outer glow ring */}
           <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-primary via-primary/80 to-accent opacity-60 blur-xl group-hover:opacity-80 transition-opacity duration-500 animate-pulse-glow-soft" />
@@ -551,30 +592,36 @@ export function ChatPanel() {
       {/* Chat Panel */}
       <div
         className={cn(
-          'fixed right-0 top-0 z-50 h-screen',
-          'w-full sm:w-[420px] md:w-[480px]',
-          'bg-card/95 backdrop-blur-2xl',
-          'border-l border-border/50',
-          'flex flex-col',
-          'shadow-[-8px_0_40px_rgba(0,0,0,0.08)]',
-          'dark:shadow-[-8px_0_40px_rgba(0,0,0,0.3)]',
-          'transition-transform duration-400 ease-out',
-          chatOpen ? 'translate-x-0' : 'translate-x-full'
+          embedded
+            ? [
+                'relative h-full min-h-[720px] w-full overflow-hidden rounded-[32px]',
+                'bg-card/95 backdrop-blur-2xl border border-border/50 flex flex-col',
+                'shadow-[0_24px_80px_-32px_rgba(0,0,0,0.18)] dark:shadow-[0_24px_80px_-32px_rgba(0,0,0,0.45)]',
+              ]
+            : [
+                'fixed right-0 top-0 z-50 h-screen',
+                'w-full sm:w-[420px] md:w-[480px]',
+                'bg-card/95 backdrop-blur-2xl',
+                'border-l border-border/50',
+                'flex flex-col',
+                'shadow-[-8px_0_40px_rgba(0,0,0,0.08)]',
+                'dark:shadow-[-8px_0_40px_rgba(0,0,0,0.3)]',
+                'transition-transform duration-400 ease-out',
+                chatOpen ? 'translate-x-0' : 'translate-x-full'
+              ]
         )}
       >
         {/* Header */}
-        <div className="border-b border-border/50 bg-gradient-to-r from-primary/5 to-transparent">
-          <div className="flex items-center justify-between p-5">
+        <div className="sticky top-0 z-20 border-b border-border/50 bg-card/95 backdrop-blur-xl">
+          <div className="flex h-16 items-center justify-between px-4 sm:px-5">
             <div className="flex items-center gap-4">
               <div className="flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 shadow-inner">
                 <GraduationCap className="w-6 h-6 text-primary" />
               </div>
               <div>
-                <h2 className="font-bold text-lg text-card-foreground">PrepMaster AI</h2>
+                <h2 className="font-bold text-lg text-card-foreground">AI Exam Coach</h2>
                 <div className="flex items-center gap-2">
-                  <p className="text-xs text-muted-foreground">
-                    {isStreaming ? 'Thinking...' : 'Your Study Mentor'}
-                  </p>
+                  <p className="text-xs text-muted-foreground">{isStreaming ? 'Thinking...' : 'Chat drives the workspace'}</p>
                   {isStreaming && (
                     <span className="flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-primary opacity-75"></span>
@@ -594,19 +641,21 @@ export function ChatPanel() {
               >
                 <Trash2 className="w-4 h-4" />
               </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setChatOpen(false)}
-                className="rounded-xl"
-              >
-                <X className="w-5 h-5" />
-              </Button>
+              {!embedded && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setChatOpen(false)}
+                  className="rounded-xl"
+                >
+                  <X className="w-5 h-5" />
+                </Button>
+              )}
             </div>
           </div>
           
           {/* Exam Selector */}
-          <div className="px-5 pb-4">
+          <div className="px-4 sm:px-5 pb-3">
             <div className="flex items-center gap-2">
               <label className="text-xs font-medium text-muted-foreground">Preparing for:</label>
               <select
@@ -637,7 +686,7 @@ export function ChatPanel() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center animate-fade-in">
               <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-primary/15 to-primary/5 flex items-center justify-center mb-5 shadow-lg shadow-primary/10">
@@ -774,6 +823,7 @@ export function ChatPanel() {
                       >
                         {action.type === 'focus' && <Play className="w-3.5 h-3.5 text-emerald-500" />}
                         {action.type === 'add-task' && <ListPlus className="w-3.5 h-3.5 text-blue-500" />}
+                        {action.type === 'add-tasks' && <ListPlus className="w-3.5 h-3.5 text-blue-500" />}
                         {action.type === 'add-plan' && <Calendar className="w-3.5 h-3.5 text-violet-500" />}
                         {(action.type === 'modify' || action.type === 'regenerate-plan') && (
                           <Edit3 className="w-3.5 h-3.5 text-amber-500" />
@@ -1062,15 +1112,14 @@ export function ChatPanel() {
         )}
 
         {/* Input */}
-        <form onSubmit={handleSubmit} className="p-5 border-t border-border/50">
-          <div className="flex gap-3">
+        <form onSubmit={handleSubmit} className="sticky bottom-0 border-t border-border/50 bg-card/95 backdrop-blur-xl p-4 sm:p-5">
+          <div className="flex items-center gap-3 rounded-full border border-border/50 bg-background/80 p-2 shadow-sm">
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask about study plans, exam tips, or any topic..."
               className={cn(
-                'flex-1 h-12 rounded-xl',
-                'input-premium',
+                'flex-1 h-11 rounded-full border-0 bg-transparent px-4 shadow-none focus-visible:ring-0',
                 'placeholder:text-muted-foreground/60'
               )}
               disabled={isLoading}
@@ -1081,7 +1130,7 @@ export function ChatPanel() {
                 size="icon"
                 variant="destructive"
                 onClick={stopStreaming}
-                className="flex-shrink-0 w-12 h-12 rounded-xl"
+                className="flex-shrink-0 h-11 w-11 rounded-full"
               >
                 <StopCircle className="w-5 h-5" />
               </Button>
@@ -1090,7 +1139,7 @@ export function ChatPanel() {
                 type="submit"
                 size="icon"
                 disabled={!input.trim() || isLoading}
-                className="flex-shrink-0 w-12 h-12 rounded-xl shadow-lg shadow-primary/20"
+                className="flex-shrink-0 h-11 w-11 rounded-full shadow-lg shadow-primary/20"
               >
                 {isLoading ? (
                   <Loader2 className="w-5 h-5 animate-spin" />

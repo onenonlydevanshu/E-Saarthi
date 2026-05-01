@@ -16,7 +16,10 @@ Rules:
 - Do not use code blocks.
 - Do not add any text before or after the JSON.
 - Always include action, message, and data.
-- Keep message concise and user-facing.
+- Keep message concise and user-facing (1-2 short sentences).
+- Every message must include a clear next step suggestion.
+- Keep mentor tone: proactive, supportive, and action-oriented.
+- Avoid generic phrasing. Anchor recommendations to current app state when available.
 - Use data.plan for study plans, data.tasks for daily tasks, data.taskTitle for focus, and data.progress for performance summaries.
 `
 
@@ -39,6 +42,37 @@ interface MemoryContext {
   recentCompletedTasks?: string[]
   recentQuizScores?: Array<{ examName: string; scorePercent: number; date: string }>
   recommendationHistory?: string[]
+  currentFocusTask?: string
+}
+
+interface AppStateContext {
+  activePage?: string
+  pendingTasksCount?: number
+  completedTasksCount?: number
+  latestPlanExamName?: string
+  latestPlanTopTopic?: string
+}
+
+function getFocusTaskTitle(
+  currentFocusTask?: string | { id?: string; title?: string } | null,
+  memoryContext?: MemoryContext
+): string {
+  if (typeof currentFocusTask === 'string') {
+    const trimmed = currentFocusTask.trim()
+    if (trimmed) return trimmed
+  }
+
+  if (
+    currentFocusTask &&
+    typeof currentFocusTask === 'object' &&
+    typeof currentFocusTask.title === 'string' &&
+    currentFocusTask.title.trim()
+  ) {
+    return currentFocusTask.title.trim()
+  }
+
+  const memoryFocus = memoryContext?.currentFocusTask?.trim()
+  return memoryFocus || 'No active focus session'
 }
 
 function detectIntent(message: string): { focus: boolean; studyPlan: boolean; dailyTasks: boolean; performance: boolean } {
@@ -229,10 +263,11 @@ function getMockResponse(
   const recommendedBooks = syllabus?.recommendedBooks || []
   
   if (intent.performance) {
+    const weakArea = perfData.weakAreas[0] || 'your weakest topic'
     return {
       response: buildStructuredResponse(
         'update_progress',
-        `Your progress is ready. Accuracy is ${perfData.overallAccuracy}%, task completion is ${perfData.taskCompletionRate}%, and the main focus areas are ${perfData.weakAreas.join(', ')}.`,
+        `Accuracy is ${perfData.overallAccuracy}% and completion is ${perfData.taskCompletionRate}%. Next step: run a 25-minute focus session on ${weakArea}.`,
         {
           progress: {
             overallAccuracy: perfData.overallAccuracy,
@@ -258,7 +293,7 @@ function getMockResponse(
     return {
       response: buildStructuredResponse(
         'add_tasks',
-        `I created ${adaptiveTasks.length} tasks for today. Start with ${firstTask}.`,
+        `Added ${adaptiveTasks.length} tasks based on your weak areas. Next step: start focus on ${firstTask}.`,
         {
           tasks: adaptiveTasks,
           taskTitle: firstTask,
@@ -275,7 +310,7 @@ function getMockResponse(
     return {
       response: buildStructuredResponse(
         'create_plan',
-        `Your ${examName} study plan is ready in Study Planner. Start with ${firstTopic}.`,
+        `Your ${examName} plan is ready in Study Planner. Next step: start your first focus session on ${firstTopic}.`,
         {
           plan: JSON.parse(adaptivePlan),
           taskTitle: firstTopic,
@@ -292,7 +327,7 @@ function getMockResponse(
     return {
       response: buildStructuredResponse(
         'start_focus',
-        `Focus Mode is ready. Start with ${suggestedFocus}.`,
+        `Focus Mode is ready for ${suggestedFocus}. Next step: run one full 25-minute cycle now.`,
         {
           taskTitle: `${suggestedFocus} - Focused Practice`,
         }
@@ -302,10 +337,11 @@ function getMockResponse(
   }
   
   if (lowerMessage.includes('upsc') || lowerMessage.includes('ias') || lowerMessage.includes('civil service')) {
+    const upscWeakArea = perfData.weakAreas[0] || 'Polity'
     return {
       response: buildStructuredResponse(
         'ask_question',
-        `I can build a UPSC plan, daily tasks, or a focus session based on your weak areas.`,
+        `I can build UPSC work around your weak area: ${upscWeakArea}. Next step: choose plan, tasks, or focus session.`,
         {
           question: 'Would you like a UPSC study plan, daily tasks, or a focus session?',
           progress: {
@@ -322,7 +358,7 @@ function getMockResponse(
   return {
     response: buildStructuredResponse(
       'ask_question',
-      `I am ready to help with performance, study plans, tasks, or focus sessions.`,
+      `I can act on your current state right now. Next step: choose one of plan, tasks, performance, or focus session.`,
       {
         question: `What would you like to work on today?`,
         progress: {
@@ -338,7 +374,15 @@ function getMockResponse(
 
 export async function POST(request: NextRequest) {
   try {
-    const { message, messages: chatHistory, performanceData, memoryContext, selectedExamId } = await request.json()
+    const {
+      message,
+      messages: chatHistory,
+      performanceData,
+      memoryContext,
+      currentFocusTask,
+      appState,
+      selectedExamId,
+    } = await request.json()
     
     // Get syllabus for selected exam
     const syllabus: ExamSyllabus | null = selectedExamId ? getSyllabusById(selectedExamId) : null
@@ -418,6 +462,7 @@ USE THIS DATA to personalize your response. Focus recommendations on their weak 
     }
 
     let memoryLayerContext = ''
+    const activeFocusTitle = getFocusTaskTitle(currentFocusTask, memoryContext)
     if (memoryContext) {
       const completed = memoryContext.recentCompletedTasks?.slice(-10) || []
       const quizMemory = memoryContext.recentQuizScores?.slice(-8) || []
@@ -426,6 +471,7 @@ USE THIS DATA to personalize your response. Focus recommendations on their weak 
 ## STUDENT MEMORY LAYER:
 - Recently Completed Tasks: ${completed.length > 0 ? completed.join(', ') : 'None recorded'}
 - Recent Quiz Memory: ${quizMemory.length > 0 ? quizMemory.map((q: { examName: string; scorePercent: number }) => `${q.examName} (${q.scorePercent}%)`).join(', ') : 'None recorded'}
+- Current Focus Session: ${activeFocusTitle}
 
 USE THIS MEMORY to adjust recommendations:
 - Avoid repeating the same tasks that were recently completed.
@@ -433,17 +479,36 @@ USE THIS MEMORY to adjust recommendations:
 - Reinforce weak areas that still show low performance.`
     }
 
+  let appStateContext = ''
+  if (appState && typeof appState === 'object') {
+    const typedAppState = appState as AppStateContext
+    appStateContext = `
+
+## LIVE APP STATE:
+- Active Page: ${typedAppState.activePage || 'Unknown'}
+- Pending Tasks: ${typedAppState.pendingTasksCount ?? 0}
+- Completed Tasks: ${typedAppState.completedTasksCount ?? 0}
+- Latest Plan Exam: ${typedAppState.latestPlanExamName || 'None'}
+- Latest Plan Top Topic: ${typedAppState.latestPlanTopTopic || 'None'}
+
+USE THIS STATE in your response:
+- Mention one concrete state item when giving a recommendation.
+- If a focus session is active, continue that task before suggesting a new one.
+- If pending tasks exist, prioritize the top pending task as the next action.
+- If no pending tasks exist, create a small immediate action list.`
+  }
+
     // Build messages array for OpenAI with enhanced context
     const contextMessage = intent.studyPlan
-      ? '\n\nReturn a JSON object with action="create_plan", a plain text message, and data.plan.'
+      ? '\n\nReturn a JSON object with action="create_plan", a plain text message, and data.plan. Also include data.tasks for immediate execution and data.taskTitle for the first focus task.'
       : intent.dailyTasks
         ? '\n\nReturn a JSON object with action="add_tasks", a plain text message, and data.tasks.'
         : intent.performance
-          ? '\n\nReturn a JSON object with action="update_progress", a plain text message, and data.progress.'
-          : '\n\nReturn a JSON object with action="ask_question", a plain text message, and a concise question in data.question if details are missing.'
+          ? '\n\nReturn a JSON object with action="update_progress", a plain text message, and data.progress. Include one state-aware next action.'
+          : '\n\nReturn a JSON object with action="ask_question", a plain text message, and a concise question in data.question if details are missing. Mention one concrete, state-aware next step.'
 
     const openaiMessages = [
-      { role: 'system', content: SYSTEM_PROMPT + syllabusContext + performanceContext + memoryLayerContext + contextMessage },
+      { role: 'system', content: SYSTEM_PROMPT + syllabusContext + performanceContext + memoryLayerContext + appStateContext + contextMessage },
       ...(chatHistory || []).slice(-10).map((msg: { role: string; content: string }) => ({
         role: msg.role,
         content: msg.content
@@ -506,40 +571,70 @@ USE THIS MEMORY to adjust recommendations:
     const encoder = new TextEncoder()
     const decoder = new TextDecoder()
     let isFirstChunk = true
+    let pendingSseBuffer = ''
 
     const transformStream = new TransformStream({
       async transform(chunk, controller) {
-        const text = decoder.decode(chunk)
-        const lines = text.split('\n').filter(line => line.trim() !== '')
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6)
-            if (data === '[DONE]') {
-              controller.enqueue(encoder.encode('data: [DONE]\n\n'))
-              continue
-            }
-            
-            try {
-              const parsed = JSON.parse(data)
-              const content = parsed.choices?.[0]?.delta?.content || ''
-              if (content) {
-                // Send intent metadata with first chunk
-                if (isFirstChunk) {
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
-                    meta: true,
-                    intent 
-                  })}\n\n`))
-                  isFirstChunk = false
-                }
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content })}\n\n`))
+        pendingSseBuffer += decoder.decode(chunk, { stream: true })
+        const lines = pendingSseBuffer.split('\n')
+        pendingSseBuffer = lines.pop() ?? ''
+
+        for (const rawLine of lines) {
+          const line = rawLine.trim()
+          if (!line || !line.startsWith('data: ')) continue
+
+          const data = line.slice(6)
+          if (data === '[DONE]') {
+            controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+            continue
+          }
+
+          try {
+            const parsed = JSON.parse(data)
+            const content = parsed.choices?.[0]?.delta?.content || ''
+            if (content) {
+              // Send intent metadata with first content chunk.
+              if (isFirstChunk) {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                  meta: true,
+                  intent,
+                })}\n\n`))
+                isFirstChunk = false
               }
-            } catch {
-              // Skip invalid JSON
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content })}\n\n`))
             }
+          } catch {
+            // Ignore malformed stream fragments.
           }
         }
-      }
+      },
+      flush(controller) {
+        const remainder = pendingSseBuffer.trim()
+        if (!remainder || !remainder.startsWith('data: ')) return
+
+        const data = remainder.slice(6)
+        if (data === '[DONE]') {
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+          return
+        }
+
+        try {
+          const parsed = JSON.parse(data)
+          const content = parsed.choices?.[0]?.delta?.content || ''
+          if (content) {
+            if (isFirstChunk) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                meta: true,
+                intent,
+              })}\n\n`))
+              isFirstChunk = false
+            }
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content })}\n\n`))
+          }
+        } catch {
+          // Ignore malformed trailing fragment.
+        }
+      },
     })
 
     return new Response(openaiResponse.body?.pipeThrough(transformStream), {
