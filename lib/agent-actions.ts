@@ -184,6 +184,7 @@ export interface AgentActionExecutorDeps {
   setTheme: (theme: 'light' | 'dark') => void
   setChatOpen: (open: boolean) => void
   getTasks: () => Array<{ id: string; title: string; completed: boolean }>
+  getCurrentFocusTask?: () => { id: string; title: string } | null
   setShowFocusPrompt?: (value: boolean) => void
 }
 
@@ -316,11 +317,12 @@ function ensureSpecificReferenceMessage(
   if (!reference) return trimmed
   if (trimmed.toLowerCase().includes(reference.toLowerCase())) return trimmed
 
+  // Short, specific reference phrasing
   if (action === 'start_focus') {
-    return `${trimmed} Focus target: ${reference}.`
+    return `${trimmed} Focus: ${reference}.`
   }
 
-  return `${trimmed} Priority focus: ${reference}.`
+  return `${trimmed} Focus: ${reference}.`
 }
 
 function ensureProgressToneMessage(
@@ -334,28 +336,36 @@ function ensureProgressToneMessage(
   const completion = typeof progress?.taskCompletionRate === 'number' ? progress.taskCompletionRate : null
   const consistency = typeof progress?.studyConsistency === 'number' ? progress.studyConsistency : null
   const accuracy = typeof progress?.overallAccuracy === 'number' ? progress.overallAccuracy : null
+  const reference = getPrimaryReference(data)
 
+  // If the assistant already commented on consistency, keep message as-is
   const lowered = message.toLowerCase()
   if (lowered.includes('consistency') || lowered.includes('on track') || lowered.includes('behind')) {
     return message
   }
 
+  // Strongly behind: short, corrective suggestion
   if (
     (completion !== null && completion < 55) ||
     (consistency !== null && consistency < 55) ||
     (accuracy !== null && accuracy < 60)
   ) {
-    return `${message} You are behind on consistency, so focus on one high-impact weak-area task now.`
+    const ref = reference ? ` ${reference}` : ''
+    return `You're behind on consistency. Do one focused 25-minute session on${ref} now.`
   }
 
+  // Strong performance: concise reinforcement
   if (
     (completion !== null && completion >= 75) &&
     (consistency !== null && consistency >= 75)
   ) {
-    return `${message} Your consistency is strong, so reinforce it with one targeted task next.`
+    const ref = reference ? ` ${reference}` : ''
+    return `Great consistency. Reinforce it with a targeted task on${ref}.`
   }
 
-  return `${message} Your progress is steady, so lock in one specific task next.`
+  // Neutral: actionable and concise
+  const ref = reference ? ` ${reference}` : ''
+  return `Progress steady — pick one specific task on${ref} and complete it.`
 }
 
 function replaceGenericEncouragement(message: string, data?: StructuredChatData): string {
@@ -365,6 +375,9 @@ function replaceGenericEncouragement(message: string, data?: StructuredChatData)
   return message
     .replace(/\bkeep going\b/gi, `continue with ${reference}`)
     .replace(/\bstay consistent\b/gi, `stay consistent on ${reference}`)
+    .replace(/\bwell done\b/gi, `good work on ${reference}`)
+    .replace(/\bgood job\b/gi, `nice progress on ${reference}`)
+    .replace(/\bnice work\b/gi, `nice progress on ${reference}`)
 }
 
 function personalizeMessage(
@@ -645,6 +658,10 @@ export function executeAgentAction(
           )
         if (task && !task.completed) {
           deps.toggleTask(task.id)
+            const currentFocusTask = deps.getCurrentFocusTask?.()
+            if (currentFocusTask?.id === task.id) {
+              deps.setCurrentFocusTask(null)
+            }
           return {
             action,
             status: 'success',
@@ -660,6 +677,10 @@ export function executeAgentAction(
 
       case 'clear_tasks': {
         deps.clearTasks()
+        const currentFocusTask = deps.getCurrentFocusTask?.()
+        if (currentFocusTask) {
+          deps.setCurrentFocusTask(null)
+        }
         return { action, status: 'success', message: 'Cleared all tasks' }
       }
 

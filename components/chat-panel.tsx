@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
+import Onboarding from '@/components/onboarding'
 import { useAppStore, type ScheduleItem } from '@/lib/store'
 import { cn } from '@/lib/utils'
 import {
@@ -249,6 +250,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
     selectedExamId,
     setSelectedExamId,
     setTheme,
+    setAgentFeedback,
+    onboardingCompleted,
   } = useAppStore()
   
   const availableExams = getAllExams()
@@ -263,6 +266,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
   const [, setPendingModification] = useState<string | null>(null)
   // Track recently executed agent actions for visual feedback
   const [recentlyExecuted, setRecentlyExecuted] = useState<ExecutedAction[]>([])
+  const [hasMounted, setHasMounted] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const fullResponseRef = useRef<string>('')
@@ -275,6 +279,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
   useEffect(() => {
     scrollToBottom()
   }, [messages, scrollToBottom])
+
+  useEffect(() => {
+    setHasMounted(true)
+  }, [])
 
   const stopStreaming = useCallback(() => {
     if (abortControllerRef.current) {
@@ -328,6 +336,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
       setTheme,
       setChatOpen,
       getTasks: () => useAppStore.getState().tasks,
+      getCurrentFocusTask: () => useAppStore.getState().currentFocusTask,
       setShowFocusPrompt,
     })
 
@@ -546,11 +555,102 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
           setTheme,
           setChatOpen,
           getTasks: () => useAppStore.getState().tasks,
+          getCurrentFocusTask: () => useAppStore.getState().currentFocusTask,
           setShowFocusPrompt,
           setDetectedPlan,
           setDetectedTasks,
         }
       )
+
+      const liveState = useAppStore.getState()
+      const livePendingTasks = liveState.tasks.filter((task) => !task.completed)
+      const currentPlan = liveState.studyPlans[liveState.studyPlans.length - 1] ?? null
+      const currentFocusTitle = liveState.currentFocusTask?.title ?? null
+      const progressData = getPerformanceData()
+      const completedRatio =
+        liveState.tasks.length > 0 ? (liveState.tasks.length - livePendingTasks.length) / liveState.tasks.length : 0
+
+      const currentActionLabelMap: Record<string, string> = {
+        create_plan: 'Plan Updated',
+        add_tasks: 'Tasks Generated',
+        start_focus: 'Focus Started',
+        update_progress: 'Progress Reviewed',
+        ask_question: 'Awaiting Input',
+      }
+
+      const executedActionTypes = executedActions.map((item) => item.action.type)
+      const hasPlanAction = executedActionTypes.includes('add_study_plan')
+      const hasTaskAction = executedActionTypes.includes('add_task') || executedActionTypes.includes('add_tasks')
+      const hasFocusAction = executedActionTypes.includes('start_focus')
+
+      const bundledActionLabel =
+        hasPlanAction && hasTaskAction && hasFocusAction
+          ? 'Plan + Tasks + Focus'
+          : hasPlanAction && hasTaskAction
+            ? 'Plan + Tasks Updated'
+            : hasFocusAction
+              ? 'Focus Started'
+              : hasPlanAction
+                ? 'Plan Updated'
+                : hasTaskAction
+                  ? 'Tasks Generated'
+                  : currentActionLabelMap[normalizedResponse.action] || normalizedResponse.action
+
+      const currentActionDetail =
+        normalizedResponse.action === 'start_focus'
+          ? normalizedResponse.data?.taskTitle || currentFocusTitle || livePendingTasks[0]?.title || 'Focus session'
+          : normalizedResponse.action === 'create_plan'
+            ? normalizedResponse.data?.plan?.examName || currentPlan?.examName || 'Study plan'
+            : normalizedResponse.action === 'add_tasks'
+              ? normalizedResponse.data?.tasks?.[0] || normalizedResponse.data?.taskTitle || livePendingTasks[0]?.title || 'New tasks'
+              : normalizedResponse.action === 'update_progress'
+                ? progressData.weakAreas[0] || 'performance review'
+                : 'Need one more detail'
+
+      const nextStepSuggestion = currentFocusTitle
+        ? `Continue ${currentFocusTitle}`
+        : livePendingTasks[0]?.title
+          ? `Start ${livePendingTasks[0].title}`
+          : currentPlan
+            ? `Begin ${currentPlan.schedule[0]?.topics[0] || currentPlan.examName}`
+            : 'Create a study plan'
+
+      const tone =
+        completedRatio >= 0.75
+          ? 'reinforcing'
+          : livePendingTasks.length > 0
+            ? 'corrective'
+            : 'encouraging'
+      // Avoid repeating the exact same suggestion if user re-submits the same query.
+      const allMessagesNow = useAppStore.getState().messages
+      const userMessages = allMessagesNow.filter((m) => m.role === 'user')
+      const previousUserMessage = userMessages.length >= 2 ? userMessages[userMessages.length - 2].content : null
+      const isRepeat = previousUserMessage && previousUserMessage === userMessage
+
+      // Rotate next step if the suggestion would repeat
+      const lastSuggestion = useAppStore.getState().lastSuggestion?.suggestion ?? null
+      let effectiveNextStep = nextStepSuggestion
+      if (isRepeat && lastSuggestion && lastSuggestion === nextStepSuggestion) {
+        const getAlternateNextStep = () => {
+          if (livePendingTasks.length > 1) return `Start ${livePendingTasks[1].title}`
+          if (!currentFocusTitle && livePendingTasks.length > 0) return `Start focus on ${livePendingTasks[0].title}`
+          if (currentPlan) return `Review ${currentPlan.schedule[0]?.topics[0] || currentPlan.examName}`
+          return 'Try a short focused session (15 minutes)'
+        }
+        effectiveNextStep = getAlternateNextStep()
+      }
+
+      setAgentFeedback({
+        currentAction: currentFocusTitle
+          ? 'Focus Active'
+          : bundledActionLabel,
+        currentActionDetail,
+        nextStep: effectiveNextStep,
+        tone,
+      })
+
+      // persist the last suggestion so future repeats can be detected and rotated
+      useAppStore.getState().setLastSuggestion({ suggestion: effectiveNextStep })
 
       const allTasks = useAppStore.getState().tasks
       const latestCompletedTasksCount = allTasks.filter((task) => task.completed).length
@@ -624,6 +724,12 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
 
   return (
     <>
+      {/* Show onboarding if not completed */}
+      {hasMounted && !onboardingCompleted ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/30">
+          <Onboarding />
+        </div>
+      ) : null}
       {/* Floating Chat Button */}
       {!embedded && !chatOpen && (
         <div className="fixed bottom-8 right-8 z-50 group">

@@ -92,11 +92,10 @@ function getPreferredAction(
   decisionPolicy: DecisionPolicy
 ): ControllerAction {
   if (decisionPolicy.hasActiveFocus) return 'start_focus'
-  if (decisionPolicy.hasPendingTasks && (intent.studyPlan || intent.dailyTasks)) {
-    return 'start_focus'
+  if (decisionPolicy.hasPendingTasks) return 'start_focus'
+  if (intent.studyPlan) {
+    return decisionPolicy.hasExistingPlan ? 'ask_question' : 'create_plan'
   }
-  if (intent.studyPlan && decisionPolicy.hasExistingPlan) return 'ask_question'
-  if (intent.studyPlan) return 'create_plan'
   if (intent.dailyTasks) return 'add_tasks'
   if (intent.performance) return 'update_progress'
   return 'ask_question'
@@ -116,7 +115,6 @@ function hasUserIgnoredSuggestion(message: string): boolean {
     "can't",
     'cannot',
     'still',
-    'yet',
   ]
   return ignoreSignals.some((signal) => text.includes(signal))
 }
@@ -127,7 +125,7 @@ function getRotatedAction(
   intent: { focus: boolean; studyPlan: boolean; dailyTasks: boolean; performance: boolean }
 ): ControllerAction {
   if (preferred === 'start_focus') {
-    return 'ask_question'
+    return decisionPolicy.hasPendingTasks ? 'update_progress' : 'ask_question'
   }
 
   if (preferred === 'ask_question') {
@@ -156,14 +154,18 @@ function getEffectiveAction(
   intent: { focus: boolean; studyPlan: boolean; dailyTasks: boolean; performance: boolean }
 ): { action: ControllerAction; rotated: boolean } {
   const lastSuggested = suggestionContext?.lastSuggestedAction || null
+  const lastSuggestedTask = suggestionContext?.lastSuggestedTaskTitle || null
   const repeatStreak = suggestionContext?.repeatStreak ?? 0
   const userIgnored = hasUserIgnoredSuggestion(message)
+  const currentTarget =
+    decisionPolicy.activeFocusTitle || decisionPolicy.nextPendingTaskTitle || null
   const shouldRotate =
     !!lastSuggested &&
     lastSuggested === preferred &&
     repeatStreak >= 1 &&
     !userIgnored &&
-    !decisionPolicy.hasActiveFocus
+    !decisionPolicy.hasActiveFocus &&
+    (lastSuggestedTask ? lastSuggestedTask === currentTarget : true)
 
   if (!shouldRotate) return { action: preferred, rotated: false }
   return {
