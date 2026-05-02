@@ -285,7 +285,17 @@ function FocusMode({ onExit }: { onExit: () => void }) {
 }
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
-function DashboardView({ onActivateFocus, userName }: { onActivateFocus: () => void; userName: string }) {
+function DashboardView({
+  onActivateFocus,
+  userName,
+  examName,
+  studyHours,
+}: {
+  onActivateFocus: () => void;
+  userName: string;
+  examName: string;
+  studyHours: string;
+}) {
   const [tasks, setTasks] = useState<Task[]>(INITIAL_TASKS);
 
   const toggle = (id: number) =>
@@ -299,28 +309,12 @@ function DashboardView({ onActivateFocus, userName }: { onActivateFocus: () => v
   return (
     
     <div className="flex-1 overflow-y-auto p-8 space-y-8">
-      {/* Welcome */}
-      <div className="flex items-start justify-between">
+      <header className="flex items-end justify-between border-b border-white/10 pb-8">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-[11px] font-semibold text-emerald-400 tracking-widest uppercase">Active Session</span>
-          </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">
-            Good morning, {userName}<span className="text-slate-500">.</span>
-          </h1>
-          <p className="text-slate-500 text-sm mt-1">
-            Exam in <span className="text-white font-semibold">47 days</span> · Keep the streak alive 🔥
-          </p>
+          <h1 className="text-5xl font-black text-slate-900 tracking-tight">Hi, {userName || 'Devanshu'}!</h1>
+          <p className="text-slate-500 mt-3 text-lg font-medium">Your AI Coach has built a {studyHours}-hour plan for {examName}.</p>
         </div>
-        <button
-          onClick={onActivateFocus}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 text-sm font-medium transition-all duration-200 hover:shadow-[0_0_20px_rgba(99,102,241,0.15)]"
-        >
-          <Zap size={14} />
-          Start Focus
-        </button>
-      </div>
+      </header>
 
       {/* Metrics Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -574,12 +568,16 @@ function ChatPanel({ onActivateFocus }: { onActivateFocus: () => void }) {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function Page() {
-  const [activeView, setActiveView] = useState<View>("dashboard");
   const [focusMode, setFocusMode] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [activeView, setActiveView] = useState<View>("dashboard");
   const [showOnboarding, setShowOnboarding] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
-  const [userName, setUserName] = useState("Aryan");
+
+  // Dynamic User Data
+  const [userName, setUserName] = useState("");
+  const [examName, setExamName] = useState("");
+  const [studyHours, setStudyHours] = useState("");
+  const [collapsed, setCollapsed] = useState(false);
 
   return (
     <div className="flex h-screen bg-[#060608] text-white overflow-hidden font-sans">
@@ -718,7 +716,12 @@ export default function Page() {
           {focusMode ? (
             <FocusMode onExit={() => setFocusMode(false)} />
           ) : activeView === "dashboard" ? (
-            <DashboardView onActivateFocus={() => setFocusMode(true)} userName={userName} />
+            <DashboardView
+              onActivateFocus={() => setFocusMode(true)}
+              userName={userName}
+              examName={examName}
+              studyHours={studyHours}
+            />
           ) : activeView === "planner" ? (
             <PlaceholderView
               icon={CalendarDays}
@@ -752,29 +755,25 @@ export default function Page() {
           <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[#0a0a0a] p-8 shadow-2xl">
             <h2 className="mb-2 text-2xl font-bold text-white">Welcome to e-Saarthi</h2>
             <p className="mb-6 text-sm text-slate-400">Let your AI mentor set up your workspace.</p>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault()
-                setShowOnboarding(false)
-              }}
-              className="space-y-4"
-            >
+            <form onSubmit={(e) => { e.preventDefault(); setShowOnboarding(false); }} className="space-y-4">
               <div>
-                <label className="mb-1 block text-xs font-medium text-slate-400">Your Name</label>
-                <input
-                  type="text"
-                  required
-                  value={userName}
-                  onChange={(e) => setUserName(e.target.value)}
-                  placeholder="e.g. Devanshu"
-                  className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white focus:border-indigo-500 focus:outline-none"
-                />
+                <label className="block text-xs font-medium text-slate-400 mb-1">Your Name</label>
+                <input type="text" required value={userName} onChange={(e) => setUserName(e.target.value)} placeholder="e.g. Devanshu" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500" />
               </div>
-              <button
-                type="submit"
-                className="mt-4 w-full rounded-xl bg-white py-3 font-semibold text-black transition-all hover:bg-slate-200"
-              >
-                Deploy My Agent
+
+              {/* Naya: Exam aur Time */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1">Target Exam</label>
+                  <input type="text" value={examName} onChange={(e) => setExamName(e.target.value)} placeholder="SSC CGL" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1">Daily Goal (Hrs)</label>
+                  <input type="number" value={studyHours} onChange={(e) => setStudyHours(e.target.value)} placeholder="6" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500" />
+                </div>
+              </div>
+              <button type="submit" className="w-full bg-white text-black hover:bg-slate-200 font-semibold py-3 rounded-xl transition-all mt-4 flex items-center justify-center gap-2">
+                <Sparkles className="h-4 w-4" /> Deploy My Agent
               </button>
             </form>
           </div>
