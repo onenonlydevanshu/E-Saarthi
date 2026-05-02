@@ -1,5 +1,4 @@
-'use client'
-
+"use client";
 import { useAppStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
 import { Flame, Clock, CheckCircle2, Target, TrendingUp, Sparkles } from 'lucide-react'
