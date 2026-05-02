@@ -1,7 +1,38 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useChat } from 'ai/react'
+// import { useChat } from 'ai/react' // Isko hata diya
+
+// Custom mock useChat hook for Track 1 Demo
+const useChat = () => {
+  const [messages, setMessages] = useState([
+    { id: '1', role: 'assistant', content: 'Hi! I am PrepMaster, your AI study mentor. Are we starting with SSC CGL topics today?' }
+  ]);
+  const [input, setInput] = useState('');
+  
+  const handleInputChange = (e: any) => setInput(e.target.value);
+  
+  const handleSubmit = (e: any) => {
+    e.preventDefault();
+    if (!input.trim()) return;
+    
+    // Add user message
+    const newMessages = [...messages, { id: Date.now().toString(), role: 'user', content: input }];
+    setMessages(newMessages);
+    setInput('');
+    
+    // Simulate AI response after 1 second
+    setTimeout(() => {
+      setMessages(prev => [...prev, { 
+        id: (Date.now() + 1).toString(), 
+        role: 'assistant', 
+        content: "That's a great focus! I'll update your dashboard tasks with some relevant practice questions. 🎯" 
+      }]);
+    }, 1000);
+  };
+
+  return { messages, input, handleInputChange, handleSubmit, isLoading: false };
+};
 import { Bot, Loader2, MessageSquare, Send, Sparkles, StopCircle, User2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
