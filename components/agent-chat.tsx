@@ -1,12 +1,11 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-// import { useChat } from 'ai/react' // Isko hata diya
 
 // Custom mock useChat hook for Track 1 Demo
 const useChat = () => {
   const [messages, setMessages] = useState([
-    { id: '1', role: 'assistant', content: 'Hi! I am PrepMaster, your AI study mentor. Are we starting with SSC CGL topics today?' }
+    { id: '1', role: 'assistant', content: 'Hello! I am PrepMaster. Ready to crush your SSC CGL targets for today? What subject should we dive into?' }
   ]);
   const [input, setInput] = useState('');
   
@@ -33,7 +32,7 @@ const useChat = () => {
 
   return { messages, input, handleInputChange, handleSubmit, isLoading: false };
 };
-import { Bot, Loader2, MessageSquare, Send, Sparkles, StopCircle, User2 } from 'lucide-react'
+import { Bot, MessageSquare, Send, Sparkles, StopCircle, User2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
@@ -256,49 +255,50 @@ export function ChatPanel({ mode = 'hero', onOpenDashboard }: AgentChatProps) {
             </div>
           </div>
         ) : (
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-              {messages.map((message) => {
-                const isUser = message.role === 'user'
-                const text = isUser ? String(message.content ?? '') : formatAssistantMessage(String(message.content ?? ''))
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+            {messages.map((message) => {
+              const isUser = message.role === 'user'
+              const text = isUser ? String(message.content ?? '') : formatAssistantMessage(String(message.content ?? ''))
 
-                return (
-                  <div
-                    key={message.id}
-                    className={cn(
-                      'flex gap-3 items-start',
-                      isUser ? 'flex-row-reverse' : 'flex-row',
-                      'animate-in fade-in slide-in-from-bottom-2 duration-300'
-                    )}
-                  >
-                    {/* Avatar */}
-                    <div className={cn('mt-1 flex h-9 w-9 shrink-0 items-center justify-center', isUser ? 'rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-md' : 'rounded-full bg-white border border-gray-100 shadow-inner') }>
-                      {isUser ? (
-                        <User2 className="h-5 w-5" />
-                      ) : (
-                        <Bot className="h-5 w-5 text-primary" />
+              return (
+                <div
+                  key={message.id}
+                  className="animate-in fade-in slide-in-from-bottom-2 duration-300"
+                >
+                  <div className="flex w-full gap-4 p-6 items-start">
+                    <div
+                      className={cn(
+                        'mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full',
+                        isUser
+                          ? 'bg-slate-100 text-slate-700'
+                          : 'border border-blue-100 bg-blue-50 text-blue-600 shadow-[0_0_18px_rgba(59,130,246,0.12)]'
                       )}
+                    >
+                      {isUser ? <User2 className="h-5 w-5" /> : <Sparkles className="h-5 w-5" />}
                     </div>
 
-                    {/* Message bubble */}
-                    <div className={cn('max-w-[85%] sm:max-w-[80%]', isUser ? 'flex justify-end' : 'flex justify-start')}>
+                    <div className="min-w-0 flex-1">
                       <div
                         className={cn(
-                          'text-sm leading-6',
+                          'prose prose-slate max-w-none',
                           isUser
-                            ? 'px-4 py-3 rounded-3xl rounded-tr-sm bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md'
-                            : 'px-4 py-4 rounded-3xl rounded-tl-sm bg-white border border-gray-100 shadow-sm text-gray-800'
+                            ? 'rounded-2xl bg-gray-50/50 px-5 py-4'
+                            : 'border-b border-gray-100 pb-4'
                         )}
                         role={isUser ? 'status' : 'article'}
                       >
-                        <p className="whitespace-pre-wrap">{text}</p>
+                        <p className="m-0 whitespace-pre-wrap text-[15px] leading-7 text-slate-800">
+                          {text}
+                        </p>
                       </div>
                     </div>
                   </div>
-                )
-              })}
+                </div>
+              )
+            })}
 
             {recentlyExecuted.length > 0 && (
-              <div className="rounded-2xl border border-border/50 bg-background/60 p-3 text-xs text-muted-foreground">
+              <div className="mx-auto w-full rounded-2xl border border-border/50 bg-background/60 p-3 text-xs text-muted-foreground">
                 {recentlyExecuted.map((item) => item).join(' · ')}
               </div>
             )}
@@ -307,14 +307,14 @@ export function ChatPanel({ mode = 'hero', onOpenDashboard }: AgentChatProps) {
       </div>
 
       <div className="relative z-10">
-        {/* Floating input bar positioned slightly above bottom */}
-        <div className="fixed inset-x-0 bottom-6 flex justify-center z-40 pointer-events-none">
-          <form onSubmit={handleSubmit} className="pointer-events-auto w-full max-w-3xl mx-4 rounded-full shadow-lg border border-gray-200 bg-white/90 dark:bg-card/90 p-2 flex items-center gap-3">
+        {/* Floating command bar */}
+        <div className="fixed inset-x-0 bottom-5 z-40 flex justify-center px-4">
+          <form onSubmit={handleSubmit} className="pointer-events-auto flex w-full max-w-4xl items-center gap-3 rounded-[28px] border border-gray-200 bg-white/95 px-4 py-3 shadow-[0_18px_60px_-24px_rgba(15,23,42,0.35)] backdrop-blur-xl dark:bg-card/95">
             <Input
               value={input}
               onChange={handleInputChange}
               placeholder="Ask anything about your exam prep..."
-              className="min-h-12 flex-1 border-0 bg-transparent px-4 shadow-none focus-visible:ring-0"
+              className="min-h-12 flex-1 border-0 bg-transparent px-3 shadow-none focus-visible:ring-0"
               disabled={isLoading}
             />
             {isLoading ? (
@@ -323,12 +323,12 @@ export function ChatPanel({ mode = 'hero', onOpenDashboard }: AgentChatProps) {
                 variant="destructive"
                 size="icon"
                 onClick={() => stop()}
-                className="h-12 w-12 shrink-0 rounded-full bg-red-600 text-white"
+                className="h-12 w-12 shrink-0 rounded-full bg-red-600 text-white shadow-md"
               >
                 <StopCircle className="h-5 w-5" />
               </Button>
             ) : (
-              <Button type="submit" size="icon" className="h-12 w-12 shrink-0 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg">
+              <Button type="submit" size="icon" className="h-12 w-12 shrink-0 rounded-full bg-slate-900 text-white shadow-lg shadow-slate-900/20 transition-transform hover:scale-105">
                 <Send className="h-5 w-5" />
               </Button>
             )}
