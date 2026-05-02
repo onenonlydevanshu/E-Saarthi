@@ -26,14 +26,14 @@ import {
   GraduationCap,
   BrainCircuit,
   Moon,
-  Bell,
-  Settings,
+  Settings as SettingsIcon,
   ChevronDown,
   CheckCircle2,
   Circle,
   ArrowRight,
   Layers,
   Trophy,
+  LogIn,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -493,7 +493,7 @@ function ChatPanel({ onActivateFocus }: { onActivateFocus: () => void }) {
           <p className="text-[11px] text-emerald-400">Online · SSC CGL Expert</p>
         </div>
         <button className="p-1.5 rounded-lg hover:bg-white/5 text-slate-500 hover:text-slate-300 transition-colors">
-          <Settings size={14} />
+          <SettingsIcon size={14} />
         </button>
       </div>
 
@@ -660,21 +660,12 @@ export default function Page() {
           </div>
         )}
 
-        {/* User avatar */}
-        <div className={`flex items-center gap-3 p-3 border-t border-white/[0.07] ${collapsed ? "justify-center" : ""}`}>
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-slate-700 to-slate-800 border border-white/10 flex items-center justify-center text-xs font-bold text-slate-300 shrink-0">
-            A
-          </div>
-          {!collapsed && (
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-slate-300 truncate">Aryan Sharma</p>
-              <p className="text-[10px] text-slate-600 truncate">Pro Plan · 47d left</p>
-            </div>
-          )}
-          {!collapsed && (
-            <Bell size={13} className="text-slate-600 hover:text-slate-400 cursor-pointer shrink-0 transition-colors" />
-          )}
-        </div>
+        {!collapsed && (
+          <button onClick={() => setShowOnboarding(true)} className="w-full flex items-center p-3 rounded-xl hover:bg-white/5 text-slate-400 transition-all mt-auto">
+            <LogIn className="h-5 w-5 md:mr-3" />
+            <span className="hidden md:block text-sm">Login</span>
+          </button>
+        )}
       </nav>
 
       {/* ── Main Workspace ─────────────────────────────────────────── */}
@@ -696,7 +687,7 @@ export default function Page() {
                 onClick={() => setShowSettings(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.07] text-xs text-slate-500 hover:text-white hover:bg-white/[0.06] transition-all"
               >
-                <Settings size={11} className="text-slate-400" />
+                <SettingsIcon size={11} className="text-slate-400" />
                 <span>Settings</span>
               </button>
               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.07] text-xs text-slate-500">
