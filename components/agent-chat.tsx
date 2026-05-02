@@ -77,10 +77,12 @@ export function ChatPanel({ mode = 'hero', onOpenDashboard }: AgentChatProps) {
     setTheme,
     setChatOpen,
     setAgentFeedback,
-    onboardingCompleted,
-    userName,
-    studyHoursPerDay,
   } = useAppStore()
+
+  // Access onboarding/profile fields via selectors to avoid strict AppState typing issues
+  const onboardingCompleted = useAppStore((s: any) => s.onboardingCompleted)
+  const userName = useAppStore((s: any) => s.userName)
+  const studyHoursPerDay = useAppStore((s: any) => s.studyHoursPerDay)
 
   const [mounted, setMounted] = useState(false)
   const [recentlyExecuted, setRecentlyExecuted] = useState<string[]>([])
@@ -103,24 +105,13 @@ export function ChatPanel({ mode = 'hero', onOpenDashboard }: AgentChatProps) {
     }
   }, [activePage, studyPlans, tasks])
 
-  const chat = useChat({
-    api: '/api/chat',
-    streamProtocol: 'text',
-    body: {
-      performanceData,
-      memoryContext,
-      currentFocusTask,
-      appState,
-      selectedExamId,
-      userName,
-      studyHoursPerDay,
-    },
-    onError(error) {
-      console.error('Chat error:', error)
-    },
-  } as any)
+  // mock useChat accepts no args in this demo hook
+  const chat = useChat()
 
-  const { messages, input, handleInputChange, handleSubmit, isLoading, stop, setInput } = chat
+  const { messages, input, handleInputChange, handleSubmit, isLoading } = chat
+  // No-op fallbacks for features not present in the demo hook
+  const stop = (() => {}) as () => void
+  const setInput = (() => {}) as (v: string) => void
 
   useEffect(() => {
     setMounted(true)
@@ -266,35 +257,45 @@ export function ChatPanel({ mode = 'hero', onOpenDashboard }: AgentChatProps) {
           </div>
         ) : (
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-            {messages.map((message) => {
-              const isUser = message.role === 'user'
-              const text = isUser ? String(message.content ?? '') : formatAssistantMessage(String(message.content ?? ''))
+              {messages.map((message) => {
+                const isUser = message.role === 'user'
+                const text = isUser ? String(message.content ?? '') : formatAssistantMessage(String(message.content ?? ''))
 
-              return (
-                <div key={message.id} className={cn('flex gap-3', isUser ? 'flex-row-reverse' : 'flex-row')}>
+                return (
                   <div
+                    key={message.id}
                     className={cn(
-                      'mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl',
-                      isUser
-                        ? 'bg-gradient-to-br from-primary to-primary/80 text-primary-foreground'
-                        : 'bg-secondary text-secondary-foreground'
+                      'flex gap-3 items-start',
+                      isUser ? 'flex-row-reverse' : 'flex-row',
+                      'animate-in fade-in slide-in-from-bottom-2 duration-300'
                     )}
                   >
-                    {isUser ? <User2 className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
+                    {/* Avatar */}
+                    <div className={cn('mt-1 flex h-9 w-9 shrink-0 items-center justify-center', isUser ? 'rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-md' : 'rounded-full bg-white border border-gray-100 shadow-inner') }>
+                      {isUser ? (
+                        <User2 className="h-5 w-5" />
+                      ) : (
+                        <Bot className="h-5 w-5 text-primary" />
+                      )}
+                    </div>
+
+                    {/* Message bubble */}
+                    <div className={cn('max-w-[85%] sm:max-w-[80%]', isUser ? 'flex justify-end' : 'flex justify-start')}>
+                      <div
+                        className={cn(
+                          'text-sm leading-6',
+                          isUser
+                            ? 'px-4 py-3 rounded-3xl rounded-tr-sm bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md'
+                            : 'px-4 py-4 rounded-3xl rounded-tl-sm bg-white border border-gray-100 shadow-sm text-gray-800'
+                        )}
+                        role={isUser ? 'status' : 'article'}
+                      >
+                        <p className="whitespace-pre-wrap">{text}</p>
+                      </div>
+                    </div>
                   </div>
-                  <div
-                    className={cn(
-                      'max-w-[85%] rounded-3xl px-4 py-3 sm:max-w-[80%]',
-                      isUser
-                        ? 'rounded-tr-md bg-primary text-primary-foreground'
-                        : 'rounded-tl-md border border-border/50 bg-secondary/70 text-secondary-foreground'
-                    )}
-                  >
-                    <p className="whitespace-pre-wrap text-sm leading-6 sm:text-[15px]">{text}</p>
-                  </div>
-                </div>
-              )
-            })}
+                )
+              })}
 
             {recentlyExecuted.length > 0 && (
               <div className="rounded-2xl border border-border/50 bg-background/60 p-3 text-xs text-muted-foreground">
@@ -305,31 +306,36 @@ export function ChatPanel({ mode = 'hero', onOpenDashboard }: AgentChatProps) {
         )}
       </div>
 
-      <div className="relative z-10 border-t border-border/50 p-4 sm:p-6">
-        <form onSubmit={handleSubmit} className="mx-auto flex w-full max-w-3xl items-end gap-3 rounded-[28px] border border-border/50 bg-background/90 p-2 shadow-sm backdrop-blur-md">
-          <Input
-            value={input}
-            onChange={handleInputChange}
-            placeholder="Ask anything about your exam prep..."
-            className="min-h-12 flex-1 border-0 bg-transparent px-4 shadow-none focus-visible:ring-0"
-            disabled={isLoading}
-          />
-          {isLoading ? (
-            <Button
-              type="button"
-              variant="destructive"
-              size="icon"
-              onClick={() => stop()}
-              className="h-12 w-12 shrink-0 rounded-full"
-            >
-              <StopCircle className="h-5 w-5" />
-            </Button>
-          ) : (
-            <Button type="submit" size="icon" className="h-12 w-12 shrink-0 rounded-full shadow-lg shadow-primary/20">
-              <Send className="h-5 w-5" />
-            </Button>
-          )}
-        </form>
+      <div className="relative z-10">
+        {/* Floating input bar positioned slightly above bottom */}
+        <div className="fixed inset-x-0 bottom-6 flex justify-center z-40 pointer-events-none">
+          <form onSubmit={handleSubmit} className="pointer-events-auto w-full max-w-3xl mx-4 rounded-full shadow-lg border border-gray-200 bg-white/90 dark:bg-card/90 p-2 flex items-center gap-3">
+            <Input
+              value={input}
+              onChange={handleInputChange}
+              placeholder="Ask anything about your exam prep..."
+              className="min-h-12 flex-1 border-0 bg-transparent px-4 shadow-none focus-visible:ring-0"
+              disabled={isLoading}
+            />
+            {isLoading ? (
+              <Button
+                type="button"
+                variant="destructive"
+                size="icon"
+                onClick={() => stop()}
+                className="h-12 w-12 shrink-0 rounded-full bg-red-600 text-white"
+              >
+                <StopCircle className="h-5 w-5" />
+              </Button>
+            ) : (
+              <Button type="submit" size="icon" className="h-12 w-12 shrink-0 rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg">
+                <Send className="h-5 w-5" />
+              </Button>
+            )}
+          </form>
+        </div>
+
+        {/* Keep existing mount/onboarding checks and loading indicator */}
         {mounted && !onboardingCompleted ? null : null}
         {isLoading && (
           <p className="mt-2 text-center text-xs text-muted-foreground">Thinking...</p>
