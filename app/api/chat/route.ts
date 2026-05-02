@@ -27,7 +27,6 @@ Rules:
 - Adjust tone by progress: encouraging and corrective when behind, reinforcing and precise when consistent.
 - Avoid generic motivational phrases without context.
 - Use data.plan for study plans, data.tasks for daily tasks, data.taskTitle for focus, and data.progress for performance summaries.
-- If the user asks to see their dashboard, study planner, or progress, acknowledge their request and include the exact text [OPEN_DASHBOARD] at the very end of your response.
 `
 
 // Keywords for different intents
@@ -35,7 +34,6 @@ const FOCUS_KEYWORDS = ['distract', 'unfocus', 'focus', 'concentrate', 'procrast
 const STUDY_PLAN_KEYWORDS = ['study plan', 'schedule', 'timetable', 'routine', 'plan my', 'create plan', 'make plan', 'generate plan', 'weekly plan', 'monthly plan', 'preparation plan', 'adaptive plan', 'personalized plan']
 const DAILY_TASK_KEYWORDS = ['what should i study', 'today\'s tasks', 'daily tasks', 'what to study', 'suggest tasks', 'today\'s plan', 'study today', 'give me tasks']
 const PERFORMANCE_KEYWORDS = ['my performance', 'how am i doing', 'my progress', 'my weak', 'my strong', 'analyze my', 'performance report', 'insights']
-const DASHBOARD_KEYWORDS = ['dashboard', 'study planner', 'progress', 'show me progress', 'open dashboard', 'go to dashboard']
 
 interface PerformanceData {
   overallAccuracy: number
@@ -206,11 +204,6 @@ function detectIntent(message: string): { focus: boolean; studyPlan: boolean; da
     dailyTasks: DAILY_TASK_KEYWORDS.some(keyword => lowerMessage.includes(keyword)),
     performance: PERFORMANCE_KEYWORDS.some(keyword => lowerMessage.includes(keyword))
   }
-}
-
-function shouldOpenDashboard(message: string): boolean {
-  const lowerMessage = message.toLowerCase()
-  return DASHBOARD_KEYWORDS.some((keyword) => lowerMessage.includes(keyword))
 }
 
 function deriveDecisionPolicy(
@@ -579,9 +572,9 @@ function getMockResponse(
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json()
     const {
-      messages: chatHistory = [],
+      message,
+      messages: chatHistory,
       performanceData,
       memoryContext,
       currentFocusTask,
@@ -589,16 +582,7 @@ export async function POST(request: NextRequest) {
       recentActionHistory,
       suggestionContext,
       selectedExamId,
-      userName,
-      studyHoursPerDay,
-    } = body
-
-    const message =
-      typeof body.message === 'string' && body.message.trim()
-        ? body.message.trim()
-        : Array.isArray(chatHistory)
-          ? [...chatHistory].reverse().find((entry) => entry?.role === 'user' && typeof entry?.content === 'string')?.content?.trim()
-          : ''
+    } = await request.json()
     
     // Get syllabus for selected exam
     const syllabus: ExamSyllabus | null = selectedExamId ? getSyllabusById(selectedExamId) : null
@@ -628,10 +612,8 @@ export async function POST(request: NextRequest) {
     )
 
     // If no API key, return mock response with streaming simulation
-    const openDashboard = shouldOpenDashboard(message)
-
     if (!apiKey) {
-      const { response: mockResponse } = getMockResponse(
+      const { response: mockResponse, intent: detectedIntent } = getMockResponse(
         message,
         performanceData,
         syllabus,
@@ -644,22 +626,26 @@ export async function POST(request: NextRequest) {
       const encoder = new TextEncoder()
       const stream = new ReadableStream({
         async start(controller) {
+          // Send intent metadata first
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
+            meta: true,
+            intent: detectedIntent 
+          })}\n\n`))
+
           const chunkSize = 24
           for (let index = 0; index < mockResponse.length; index += chunkSize) {
             const chunk = mockResponse.slice(index, index + chunkSize)
-            controller.enqueue(encoder.encode(chunk))
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`))
             await new Promise(resolve => setTimeout(resolve, 12))
           }
-          if (openDashboard) {
-            controller.enqueue(encoder.encode('\n\n[OPEN_DASHBOARD]'))
-          }
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'))
           controller.close()
         }
       })
 
       return new Response(stream, {
         headers: {
-          'Content-Type': 'text/plain; charset=utf-8',
+          'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
           'Connection': 'keep-alive',
         }
@@ -800,25 +786,8 @@ CONTINUITY REQUIREMENT:
               ? '\n\nReturn a JSON object with action="add_tasks", a plain text message, and data.tasks. Keep tasks executable now and non-repetitive with recent suggestions.'
               : '\n\nReturn a JSON object with action="update_progress", a plain text message, and data.progress. Include one concrete next action based on current state.'
 
-    // Build user profile context
-    let userContext = ''
-    if (userName) {
-      userContext = `
-
-## STUDENT PROFILE:
-- Name: ${userName}
-- Daily Study Target: ${studyHoursPerDay} hours/day
-- Selected Exam: ${selectedExamId ? 'Set' : 'Not selected'}
-
-Personalization:
-- Address ${userName} by name throughout your responses.
-- Reference their daily study target (${studyHoursPerDay} hours) when planning study sessions.
-- Tailor recommendations specifically for their exam preparation journey.
-- Be encouraging and supportive, knowing them by name builds trust and engagement.`
-    }
-
     const openaiMessages = [
-      { role: 'system', content: SYSTEM_PROMPT + userContext + syllabusContext + performanceContext + memoryLayerContext + appStateContext + decisionPolicyContext + suggestionContextBlock + actionContinuityContext + contextMessage },
+      { role: 'system', content: SYSTEM_PROMPT + syllabusContext + performanceContext + memoryLayerContext + appStateContext + decisionPolicyContext + suggestionContextBlock + actionContinuityContext + contextMessage },
       ...(chatHistory || []).slice(-10).map((msg: { role: string; content: string }) => ({
         role: msg.role,
         content: msg.content
@@ -877,9 +846,10 @@ Personalization:
       })
     }
 
-    // Transform the OpenAI stream into raw text chunks for useChat(streamProtocol: 'text').
+    // Transform the OpenAI stream
     const encoder = new TextEncoder()
     const decoder = new TextDecoder()
+    let isFirstChunk = true
     let pendingSseBuffer = ''
 
     const transformStream = new TransformStream({
@@ -893,13 +863,24 @@ Personalization:
           if (!line || !line.startsWith('data: ')) continue
 
           const data = line.slice(6)
-          if (data === '[DONE]') continue
+          if (data === '[DONE]') {
+            controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+            continue
+          }
 
           try {
             const parsed = JSON.parse(data)
             const content = parsed.choices?.[0]?.delta?.content || ''
             if (content) {
-              controller.enqueue(encoder.encode(content))
+              // Send intent metadata with first content chunk.
+              if (isFirstChunk) {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                  meta: true,
+                  intent,
+                })}\n\n`))
+                isFirstChunk = false
+              }
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content })}\n\n`))
             }
           } catch {
             // Ignore malformed stream fragments.
@@ -911,13 +892,23 @@ Personalization:
         if (!remainder || !remainder.startsWith('data: ')) return
 
         const data = remainder.slice(6)
-        if (data === '[DONE]') return
+        if (data === '[DONE]') {
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+          return
+        }
 
         try {
           const parsed = JSON.parse(data)
           const content = parsed.choices?.[0]?.delta?.content || ''
           if (content) {
-            controller.enqueue(encoder.encode(content))
+            if (isFirstChunk) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                meta: true,
+                intent,
+              })}\n\n`))
+              isFirstChunk = false
+            }
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content })}\n\n`))
           }
         } catch {
           // Ignore malformed trailing fragment.
@@ -925,36 +916,9 @@ Personalization:
       },
     })
 
-    const stream = new ReadableStream({
-      async start(controller) {
-        const transformed = openaiResponse.body?.pipeThrough(transformStream)
-        if (!transformed) {
-          controller.error(new Error('No response stream'))
-          return
-        }
-
-        const reader = transformed.getReader()
-        try {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            controller.enqueue(value)
-          }
-          if (openDashboard) {
-            controller.enqueue(encoder.encode('\n\n[OPEN_DASHBOARD]'))
-          }
-          controller.close()
-        } catch (error) {
-          controller.error(error)
-        } finally {
-          reader.releaseLock()
-        }
-      }
-    })
-
-    return new Response(stream, {
+    return new Response(openaiResponse.body?.pipeThrough(transformStream), {
       headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
       }

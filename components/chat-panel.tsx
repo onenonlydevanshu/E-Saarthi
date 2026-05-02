@@ -73,6 +73,25 @@ const QUICK_ACTIONS = [
   { icon: Zap, label: 'Stay Focused', prompt: "I'm feeling distracted, help me focus" },
 ]
 
+// Local chat commands that map short user phrases to quick UI actions
+const COMMANDS = [
+  {
+    pattern: /activate focus mode/i,
+    action: 'focus_on',
+    reply: '✦ Focus Mode activated. Dashboard minimized — your session starts now.',
+  },
+  {
+    pattern: /exit focus mode|deactivate focus|end focus/i,
+    action: 'focus_off',
+    reply: '✦ Focus Mode deactivated. Full dashboard restored.',
+  },
+  {
+    pattern: /show weak topics/i,
+    action: 'weak_topics_on',
+    reply: 'Pulling up your weak topics...',
+  },
+]
+
 // Inline action button types
 interface InlineAction {
   type: 'focus' | 'add-task' | 'add-tasks' | 'add-plan' | 'modify' | 'regenerate-plan' | 'view'
@@ -82,6 +101,8 @@ interface InlineAction {
 
 interface ChatPanelProps {
   embedded?: boolean
+  onActivateFocus?: () => void
+  onOpenDashboard?: () => void
 }
 
 // Parse inline actions from message content
@@ -222,7 +243,7 @@ function getSuggestionContext(messages: Array<{ role: 'user' | 'assistant'; cont
   }
 }
 
-export function ChatPanel({ embedded = false }: ChatPanelProps) {
+export function ChatPanel({ embedded = false, onActivateFocus, onOpenDashboard }: ChatPanelProps) {
   const {
     chatOpen,
     setChatOpen,
@@ -429,7 +450,26 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
     setDetectedTasks(null)
     fullResponseRef.current = ''
 
-    const needsFocus = detectFocusIntent(userMessage)
+      // Local command matching (fast-path) — allows simple UI commands without hitting the API
+      const localMatch = COMMANDS.find((c) => c.pattern.test(userMessage))
+      if (localMatch) {
+        // Execute mapped UI action via props when provided
+        if (localMatch.action === 'focus_on') {
+          // prefer prop setter if provided, otherwise fallback to internal behavior
+          try { onActivateFocus && onActivateFocus() } catch {}
+        }
+        if (localMatch.action === 'weak_topics_on') {
+          try { onOpenDashboard && onOpenDashboard() } catch {}
+        }
+
+        // Echo assistant quick reply and skip remote API call
+        addMessage({ role: 'assistant', content: localMatch.reply })
+        setIsLoading(false)
+        setIsStreaming(false)
+        return
+      }
+
+      const needsFocus = detectFocusIntent(userMessage)
     
     abortControllerRef.current = new AbortController()
     
@@ -780,16 +820,16 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
         className={cn(
           embedded
             ? [
-                'relative flex h-full min-h-[720px] min-w-0 w-full flex-col overflow-hidden rounded-[32px]',
+                'relative h-full min-h-[720px] w-full overflow-hidden rounded-[32px]',
                 'bg-card/95 backdrop-blur-2xl border border-border/50 flex flex-col',
                 'shadow-[0_24px_80px_-32px_rgba(0,0,0,0.18)] dark:shadow-[0_24px_80px_-32px_rgba(0,0,0,0.45)]',
               ]
             : [
-                'fixed right-0 top-0 z-50 h-[100dvh] max-h-[100dvh] w-[min(100vw,480px)] max-w-[100vw]',
-                'sm:w-[420px] md:w-[480px]',
+                'fixed right-0 top-0 z-50 h-screen',
+                'w-full sm:w-[420px] md:w-[480px]',
                 'bg-card/95 backdrop-blur-2xl',
                 'border-l border-border/50',
-                'flex flex-col overflow-hidden',
+                'flex flex-col',
                 'shadow-[-8px_0_40px_rgba(0,0,0,0.08)]',
                 'dark:shadow-[-8px_0_40px_rgba(0,0,0,0.3)]',
                 'transition-transform duration-400 ease-out',
@@ -799,15 +839,15 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
       >
         {/* Header */}
         <div className="sticky top-0 z-20 border-b border-border/50 bg-card/95 backdrop-blur-xl">
-          <div className="flex h-16 items-center justify-between gap-3 px-4 sm:px-5">
-            <div className="flex min-w-0 items-center gap-4">
+          <div className="flex h-16 items-center justify-between px-4 sm:px-5">
+            <div className="flex items-center gap-4">
               <div className="flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 shadow-inner">
                 <GraduationCap className="w-6 h-6 text-primary" />
               </div>
-              <div className="min-w-0">
+              <div>
                 <h2 className="font-bold text-lg text-card-foreground">AI Exam Coach</h2>
-                <div className="flex min-w-0 items-center gap-2">
-                  <p className="truncate text-xs text-muted-foreground">{isStreaming ? 'Thinking...' : 'Chat drives the workspace'}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-xs text-muted-foreground">{isStreaming ? 'Thinking...' : 'Chat drives the workspace'}</p>
                   {isStreaming && (
                     <span className="flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-primary opacity-75"></span>
@@ -839,10 +879,40 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
               )}
             </div>
           </div>
+          
+          {/* Exam Selector */}
+          <div className="px-4 sm:px-5 pb-3">
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-medium text-muted-foreground">Preparing for:</label>
+              <select
+                value={selectedExamId || ''}
+                onChange={(e) => setSelectedExamId(e.target.value || null)}
+                className={cn(
+                  'flex-1 text-sm font-medium px-3 py-2 rounded-xl',
+                  'bg-secondary/50 border border-border/50',
+                  'text-card-foreground',
+                  'focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/30',
+                  'transition-all'
+                )}
+              >
+                <option value="">Select an exam...</option>
+                {availableExams.map((exam) => (
+                  <option key={exam.id} value={exam.id}>
+                    {exam.shortName} - {exam.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {currentSyllabus && (
+              <p className="text-xs text-muted-foreground mt-2 px-1">
+                {currentSyllabus.subjects.length} subjects | {currentSyllabus.totalMarks} marks | {currentSyllabus.duration}
+              </p>
+            )}
+          </div>
         </div>
 
         {/* Messages */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-4">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center animate-fade-in">
               <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-primary/15 to-primary/5 flex items-center justify-center mb-5 shadow-lg shadow-primary/10">
@@ -886,7 +956,20 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
                   </button>
                 ))}
               </div>
-
+              
+              {/* Exam context */}
+              {exams.length > 0 && (
+                <div className="mt-6 p-4 bg-secondary/30 rounded-xl border border-border/50 max-w-[320px]">
+                  <p className="text-xs text-muted-foreground mb-2">Your upcoming exams:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {exams.slice(0, 3).map(exam => (
+                      <span key={exam.id} className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-lg">
+                        {exam.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -910,7 +993,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
             <div
               key={message.id}
               className={cn(
-                'flex min-w-0 gap-3 animate-fade-in',
+                'flex gap-3 animate-fade-in',
                 message.role === 'user' ? 'flex-row-reverse' : ''
               )}
               style={{ animationDelay: `${index * 0.05}s` }}
@@ -929,10 +1012,10 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
                   <Bot className="w-4 h-4" />
                 )}
               </div>
-              <div className="min-w-0 max-w-[85%] space-y-2 sm:max-w-[82%]">
+              <div className="max-w-[82%] space-y-2">
                 <div
                   className={cn(
-                    'break-words px-5 py-3.5 rounded-2xl shadow-sm',
+                    'px-5 py-3.5 rounded-2xl shadow-sm',
                     message.role === 'user'
                       ? 'bg-gradient-to-br from-primary to-primary/90 text-primary-foreground rounded-tr-lg'
                       : 'bg-secondary text-secondary-foreground rounded-tl-lg'
@@ -1232,7 +1315,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
 
         {/* Quick action bar when there are messages */}
         {messages.length > 0 && showQuickActions && (
-          <div className="px-4 py-3 border-t border-border/30 bg-secondary/30 sm:px-5">
+          <div className="px-5 py-3 border-t border-border/30 bg-secondary/30">
             <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
               {QUICK_ACTIONS.map((action) => (
                 <button
@@ -1256,13 +1339,13 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
 
         {/* Input */}
         <form onSubmit={handleSubmit} className="sticky bottom-0 border-t border-border/50 bg-card/95 backdrop-blur-xl p-4 sm:p-5">
-          <div className="flex flex-col gap-2 rounded-[28px] border border-border/50 bg-background/80 p-2 shadow-sm sm:flex-row sm:items-center sm:gap-3 sm:rounded-full">
+          <div className="flex items-center gap-3 rounded-full border border-border/50 bg-background/80 p-2 shadow-sm">
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask about study plans, exam tips, or any topic..."
               className={cn(
-                'h-11 min-w-0 flex-1 rounded-full border-0 bg-transparent px-4 shadow-none focus-visible:ring-0',
+                'flex-1 h-11 rounded-full border-0 bg-transparent px-4 shadow-none focus-visible:ring-0',
                 'placeholder:text-muted-foreground/60'
               )}
               disabled={isLoading}
@@ -1273,7 +1356,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
                 size="icon"
                 variant="destructive"
                 onClick={stopStreaming}
-                className="h-11 w-full flex-shrink-0 rounded-full sm:w-11"
+                className="flex-shrink-0 h-11 w-11 rounded-full"
               >
                 <StopCircle className="w-5 h-5" />
               </Button>
@@ -1282,7 +1365,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps) {
                 type="submit"
                 size="icon"
                 disabled={!input.trim() || isLoading}
-                className="h-11 w-full flex-shrink-0 rounded-full shadow-lg shadow-primary/20 sm:w-11"
+                className="flex-shrink-0 h-11 w-11 rounded-full shadow-lg shadow-primary/20"
               >
                 {isLoading ? (
                   <Loader2 className="w-5 h-5 animate-spin" />
