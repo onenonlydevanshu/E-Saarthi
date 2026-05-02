@@ -311,8 +311,8 @@ function DashboardView({
     <div className="flex-1 overflow-y-auto p-8 space-y-8">
       <header className="flex items-end justify-between border-b border-white/10 pb-8">
         <div>
-          <h1 className="text-5xl font-black text-slate-900 tracking-tight">Hi, {userName || 'Devanshu'}!</h1>
-          <p className="text-slate-500 mt-3 text-lg font-medium">Your AI Coach has built a {studyHours}-hour plan for {examName}.</p>
+          <h1 className="text-5xl font-black text-white tracking-tight">Hi, {userName || 'Devanshu'}!</h1>
+          <p className="text-slate-300 mt-3 text-lg font-medium">Your AI Coach has built a {studyHours || '6'}-hour plan for {examName || 'SSC CGL'}.</p>
         </div>
       </header>
 
