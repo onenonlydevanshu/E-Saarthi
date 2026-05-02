@@ -1,78 +1,108 @@
 "use client";
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ChatPanel } from '@/components/agent-chat';
-import { BookOpen, LayoutDashboard, Trophy, Timer } from 'lucide-react';
 import DashboardMetrics from '@/components/dashboard-metrics';
 import StudyTasks from '@/components/study-tasks';
+import { LayoutDashboard, BookOpen, Trophy, Timer, Sparkles } from 'lucide-react';
 
 export default function Home() {
+  const [focusMode, setFocusMode] = useState(false);
   const [activeView, setActiveView] = useState('dashboard');
-  const [focusMode, setFocusMode] = useState(false); // Naya State
 
   return (
     <div className="flex h-screen w-full bg-white text-slate-900 overflow-hidden font-sans">
       
-      {/* SIDEBAR */}
-      <div className="w-20 md:w-64 border-r border-slate-100 bg-white flex flex-col items-center md:items-start py-6 z-10">
-        <div className="px-6 mb-10 w-full flex items-center justify-center md:justify-start">
-          <div className="h-9 w-9 bg-blue-600 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg">e</div>
-          <span className="hidden md:block ml-3 font-bold text-xl tracking-tight text-slate-800">Saarthi</span>
+      {/* SIDEBAR - Fixed & Clean */}
+      <div className="w-20 md:w-64 border-r border-slate-100 bg-white flex flex-col py-8 z-20">
+        <div className="px-8 mb-12 flex items-center gap-3">
+          <div className="h-10 w-10 bg-blue-600 rounded-2xl flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-blue-200">e</div>
+          <span className="hidden md:block font-black text-2xl tracking-tighter text-slate-800">Saarthi</span>
         </div>
         
-        <nav className="w-full px-4 space-y-2 flex-1">
-          <button onClick={() => {setActiveView('dashboard'); setFocusMode(false);}} className={`w-full flex items-center p-3 rounded-xl transition-all ${activeView === 'dashboard' && !focusMode ? 'bg-blue-50 text-blue-700 font-semibold' : 'hover:bg-slate-50 text-slate-500'}`}>
+        <nav className="flex-1 px-4 space-y-2">
+          <button onClick={() => {setActiveView('dashboard'); setFocusMode(false);}} 
+            className={`w-full flex items-center p-4 rounded-2xl transition-all ${activeView === 'dashboard' && !focusMode ? 'bg-blue-50 text-blue-700 font-bold' : 'hover:bg-slate-50 text-slate-400'}`}>
             <LayoutDashboard className="h-5 w-5 md:mr-3" />
             <span className="hidden md:block text-sm">Dashboard</span>
           </button>
+          <button onClick={() => setActiveView('tasks')} 
+            className={`w-full flex items-center p-4 rounded-2xl transition-all ${activeView === 'tasks' ? 'bg-blue-50 text-blue-700 font-bold' : 'hover:bg-slate-50 text-slate-400'}`}>
+            <BookOpen className="h-5 w-5 md:mr-3" />
+            <span className="hidden md:block text-sm">Study Plan</span>
+          </button>
           {focusMode && (
-            <div className="w-full flex items-center p-3 rounded-xl bg-indigo-50 text-indigo-700 font-bold animate-pulse">
+            <div className="mt-4 p-4 rounded-2xl bg-indigo-600 text-white flex items-center shadow-lg animate-pulse">
               <Timer className="h-5 w-5 md:mr-3" />
-              <span className="hidden md:block text-sm">Focus Active</span>
+              <span className="hidden md:block text-sm font-bold">Focus Mode ON</span>
             </div>
           )}
         </nav>
       </div>
 
-      {/* MIDDLE CONTENT */}
-      <div className={`flex-1 overflow-y-auto p-4 md:p-8 transition-all duration-700 ${focusMode ? 'bg-slate-900' : 'bg-slate-50/30'}`}>
-        <div className="max-w-4xl mx-auto relative z-10">
-          
+      {/* MAIN CONTENT AREA */}
+      <div className={`flex-1 relative transition-all duration-1000 overflow-y-auto ${focusMode ? 'bg-slate-950' : 'bg-slate-50/50'}`}>
+        
+        {/* Background Mesh Gradient (Only for Dashboard) */}
+        {!focusMode && (
+          <div className="absolute inset-0 overflow-hidden pointer-events-none">
+            <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] rounded-full bg-blue-100/30 blur-[120px]" />
+            <div className="absolute top-[20%] -right-[10%] w-[30%] h-[30%] rounded-full bg-indigo-100/20 blur-[100px]" />
+          </div>
+        )}
+
+        <div className="max-w-5xl mx-auto px-6 py-12 relative z-10">
           {focusMode ? (
-            /* AGENTIC UI: FOCUS MODE VIEW */
-            <div className="h-[80vh] flex flex-col items-center justify-center text-center space-y-8 animate-in zoom-in-95 duration-500">
-              <h2 className="text-indigo-400 text-sm font-mono tracking-[0.3em] uppercase">Deep Focus Session</h2>
-              <div className="text-8-xl md:text-9xl font-black text-white tabular-nums tracking-tighter">
+            /* IMMERSIVE FOCUS TIMER */
+            <div className="h-[75vh] flex flex-col items-center justify-center space-y-12 animate-in zoom-in-95 duration-700">
+              <div className="space-y-4 text-center">
+                <p className="text-indigo-400 text-xs font-bold tracking-[0.4em] uppercase">Deep Focus Active</p>
+                <h2 className="text-white/50 text-xl font-medium">Quantitative Aptitude Practice</h2>
+              </div>
+              <div className="text-[12rem] font-black text-white tabular-nums tracking-tighter leading-none">
                 24:59
               </div>
-              <p className="text-slate-400 max-w-sm">PrepMaster has hidden your distractions. Focus on Quantitative Aptitude.</p>
               <button 
                 onClick={() => setFocusMode(false)}
-                className="px-8 py-3 bg-white/10 hover:bg-white/20 text-white rounded-full border border-white/20 transition-all text-sm font-medium"
+                className="px-10 py-4 bg-white/5 hover:bg-white/10 text-white rounded-full border border-white/10 transition-all text-sm font-bold backdrop-blur-md"
               >
-                End Session
+                Exit Session
               </button>
             </div>
           ) : (
-            /* NORMAL DASHBOARD VIEW */
-            <>
-              <header className="mb-10">
-                <h1 className="text-4xl font-extrabold text-slate-900">Welcome, Devanshu! 👋</h1>
-                <p className="text-slate-500 mt-2 text-lg">SSC CGL Tier 1 • 45 days remaining</p>
+            /* CLEAN PREMIUM DASHBOARD */
+            <div className="space-y-12 animate-in fade-in slide-in-from-bottom-6 duration-700">
+              <header className="flex items-end justify-between border-b border-slate-200 pb-8">
+                <div>
+                  <h1 className="text-5xl font-black text-slate-900 tracking-tight">Hi, Devanshu!</h1>
+                  <p className="text-slate-500 mt-3 text-lg font-medium">You have 2 focus sessions scheduled for today.</p>
+                </div>
+                <div className="hidden lg:flex items-center gap-2 px-4 py-2 bg-white rounded-full border border-slate-100 shadow-sm text-xs font-bold text-slate-600">
+                  <Sparkles className="h-4 w-4 text-blue-500" />
+                  AI Coach Online
+                </div>
               </header>
-              <div className="space-y-10">
-                <DashboardMetrics />
-                <StudyTasks />
+
+              <div className="grid gap-12">
+                <section>
+                  <DashboardMetrics />
+                </section>
+                <section>
+                  <div className="flex items-center justify-between mb-6">
+                    <h2 className="text-2xl font-bold text-slate-800 tracking-tight">Today's Targets</h2>
+                  </div>
+                  <StudyTasks />
+                </section>
               </div>
-            </>
+            </div>
           )}
         </div>
       </div>
 
-      {/* RIGHT CHAT PANEL (Passing the setter) */}
-      <div className="w-80 lg:w-96 border-l border-slate-100 bg-white hidden lg:block z-10">
+      {/* RIGHT CHAT PANEL */}
+      <div className="w-80 lg:w-[400px] border-l border-slate-100 bg-white hidden xl:block shadow-[-20px_0_50px_-20px_rgba(0,0,0,0.03)]">
         <ChatPanel 
           onOpenDashboard={() => {setActiveView('dashboard'); setFocusMode(false);}} 
-          onActivateFocus={() => setFocusMode(true)} // Naya Prop
+          onActivateFocus={() => setFocusMode(true)}
         />
       </div>
 
