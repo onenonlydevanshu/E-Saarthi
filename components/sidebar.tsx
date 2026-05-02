@@ -30,7 +30,7 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        'fixed left-0 top-0 z-40 h-screen transition-all duration-400 ease-out',
+        'fixed left-0 top-0 z-40 h-[100dvh] overflow-hidden transition-all duration-400 ease-out',
         'bg-sidebar/95 backdrop-blur-xl border-r border-sidebar-border/50',
         'flex flex-col',
         'shadow-[4px_0_32px_rgba(0,0,0,0.04)]',
@@ -41,7 +41,7 @@ export function Sidebar() {
       {/* Logo */}
       <div
         className={cn(
-          'relative flex items-center gap-4 border-b border-sidebar-border/50 transition-all duration-300',
+          'relative flex min-w-0 items-center gap-4 border-b border-sidebar-border/50 transition-all duration-300',
           sidebarOpen ? 'px-6 py-5' : 'p-4 justify-center'
         )}
       >
@@ -107,7 +107,7 @@ export function Sidebar() {
               onClick={() => setActivePage(item.id)}
               title={!sidebarOpen ? item.label : undefined}
               className={cn(
-                'group relative w-full flex items-center rounded-2xl touch-feedback',
+                'group relative flex w-full min-w-0 items-center rounded-2xl touch-feedback',
                 'transition-all duration-250 ease-out',
                 sidebarOpen ? 'gap-4 px-4 py-3.5' : 'justify-center p-3.5',
                 isActive 
@@ -123,7 +123,7 @@ export function Sidebar() {
               )}
               
               <div className={cn(
-                'relative flex items-center justify-center transition-all duration-250',
+                'relative flex h-10 w-10 flex-shrink-0 items-center justify-center transition-all duration-250',
                 'w-10 h-10 rounded-xl',
                 isActive 
                   ? 'bg-primary/15 text-primary' 
@@ -137,7 +137,7 @@ export function Sidebar() {
               </div>
               
               {sidebarOpen && (
-                <div className="flex flex-col items-start animate-fade-in min-w-0">
+                <div className="flex min-w-0 flex-col items-start animate-fade-in">
                   <span className={cn(
                     'text-sm font-semibold truncate',
                     isActive && 'text-primary'
@@ -183,7 +183,7 @@ export function Sidebar() {
         <button
           onClick={toggleTheme}
           className={cn(
-            'group w-full flex items-center rounded-2xl touch-feedback',
+            'group flex w-full min-w-0 items-center rounded-2xl touch-feedback',
             'transition-all duration-250 ease-out',
             'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground',
             sidebarOpen ? 'gap-4 px-4 py-3.5' : 'justify-center p-3.5'
@@ -217,7 +217,7 @@ export function Sidebar() {
           size="sm"
           onClick={() => setSidebarOpen(!sidebarOpen)}
           className={cn(
-            'w-full rounded-2xl h-12 transition-all duration-250',
+            'w-full min-w-0 rounded-2xl h-12 transition-all duration-250',
             sidebarOpen ? 'justify-between px-4' : 'justify-center'
           )}
         >
@@ -240,7 +240,7 @@ export function Sidebar() {
           size="sm"
           onClick={() => window.location.reload()}
           className={cn(
-            'w-full rounded-2xl h-12 justify-between transition-all duration-250',
+            'w-full min-w-0 rounded-2xl h-12 justify-between transition-all duration-250',
             !sidebarOpen && 'justify-center px-0'
           )}
         >

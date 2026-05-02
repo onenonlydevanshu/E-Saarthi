@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAppStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
 import {
@@ -33,10 +33,19 @@ const sampleTasks = [
 export function DailyTasksPage() {
   const { tasks, addTask, toggleTask, removeTask, clearTasks } = useAppStore()
   const [isGenerating, setIsGenerating] = useState(false)
+  const [hasMounted, setHasMounted] = useState(false)
+  const [todayLabel, setTodayLabel] = useState('Today')
+  const [todayKey, setTodayKey] = useState('')
 
-  const todayTasks = tasks.filter(
-    (t) => t.createdAt.split('T')[0] === new Date().toISOString().split('T')[0]
-  )
+  useEffect(() => {
+    setHasMounted(true)
+    setTodayLabel(format(new Date(), 'EEEE, MMMM d'))
+    setTodayKey(new Date().toISOString().split('T')[0])
+  }, [])
+
+  const todayTasks = hasMounted
+    ? tasks.filter((t) => t.createdAt.split('T')[0] === todayKey)
+    : []
 
   const completedCount = todayTasks.filter((t) => t.completed).length
   const progress =
@@ -69,7 +78,7 @@ export function DailyTasksPage() {
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-border/60 bg-card/50 backdrop-blur-sm">
               <CalendarDays className="w-3.5 h-3.5 text-primary" />
               <span className="text-xs font-medium text-foreground tracking-tight">
-                {format(new Date(), 'EEEE, MMMM d')}
+                {todayLabel}
               </span>
             </div>
             <h1 className="text-4xl sm:text-5xl font-bold tracking-tight leading-[1.05]">

@@ -29,6 +29,9 @@ export function DashboardPage() {
     adaptiveInsights,
     getPerformanceData,
     setChatOpen,
+    userName,
+    totalStudyHours,
+    studyHoursPerDay,
   } = useAppStore()
 
   const performanceData = getPerformanceData()
@@ -113,7 +116,7 @@ export function DashboardPage() {
           </div>
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.05]">
             <span className="text-foreground">Welcome back, </span>
-            <span className="gradient-text-bold">Student</span>
+            <span className="gradient-text-bold">{userName || 'Student'}</span>
           </h1>
           <p className="text-muted-foreground text-base sm:text-lg leading-relaxed max-w-md">
             Ready to crush your study goals today? Your AI mentor is standing by

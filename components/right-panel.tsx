@@ -27,6 +27,7 @@ export function RightPanel() {
     tasks,
     toggleTask,
     currentFocusTask,
+    agentFeedback,
     setCurrentFocusTask,
     focusAutoStart,
     setFocusAutoStart,
@@ -51,10 +52,12 @@ export function RightPanel() {
   const [focusPulse, setFocusPulse] = useState(false)
   const [highlightedTaskIds, setHighlightedTaskIds] = useState<Set<string>>(new Set())
   const [highlightedPlanKeys, setHighlightedPlanKeys] = useState<Set<string>>(new Set())
+  const [feedbackPulse, setFeedbackPulse] = useState(false)
 
   const previousPlanIdRef = useRef<string | null>(null)
   const previousTaskIdsRef = useRef<string[]>([])
   const previousFocusIdRef = useRef<string | null>(null)
+  const previousFeedbackUpdatedAtRef = useRef<string | null>(null)
 
   const [mode, setMode] = useState<TimerMode>('focus')
   const [timeLeft, setTimeLeft] = useState(timerSettings.focus.duration)
@@ -124,6 +127,14 @@ export function RightPanel() {
   }, [currentFocusTask])
 
   useEffect(() => {
+    if (previousFeedbackUpdatedAtRef.current === agentFeedback.updatedAt) return
+    previousFeedbackUpdatedAtRef.current = agentFeedback.updatedAt
+    setFeedbackPulse(true)
+    const timer = setTimeout(() => setFeedbackPulse(false), 1400)
+    return () => clearTimeout(timer)
+  }, [agentFeedback.updatedAt])
+
+  useEffect(() => {
     if (focusAutoStart && currentFocusTask) {
       setMode('focus')
       setTimeLeft(timerSettings.focus.duration)
@@ -170,32 +181,107 @@ export function RightPanel() {
 
   const activeTaskTitle = currentFocusTask?.title ?? 'Choose a task from chat or your list'
   const scheduleItems = latestPlan?.schedule ?? []
+  const pendingTasks = tasks.filter((task) => !task.completed)
+  const primaryPendingTask = pendingTasks[0]?.title ?? null
+  const currentActionLabel = currentFocusTask
+    ? 'Focus Active'
+    : agentFeedback.currentAction || 'Waiting for input'
+  const currentActionDetail = currentFocusTask?.title || agentFeedback.currentActionDetail
+  const nextStepSuggestion = currentFocusTask
+    ? `Continue ${currentFocusTask.title}`
+    : primaryPendingTask
+      ? `Start ${primaryPendingTask}`
+      : latestPlan
+        ? `Begin ${latestPlan.schedule[0]?.topics[0] || latestPlan.examName}`
+        : agentFeedback.nextStep
+
+  const toneStyles = {
+    neutral: 'border-slate-500/25 bg-slate-500/8 text-slate-700 dark:text-slate-300',
+    encouraging: 'border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+    reinforcing: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+    corrective: 'border-violet-500/25 bg-violet-500/10 text-violet-700 dark:text-violet-300',
+  } as const
 
   return (
     <div className="space-y-4">
-      <Card className="rounded-2xl border-border/50 bg-card/85 backdrop-blur-xl shadow-sm overflow-hidden">
-        <CardContent className="p-4">
+      <Card className="rounded-2xl border-primary/15 bg-card/90 backdrop-blur-xl shadow-lg shadow-primary/5 overflow-hidden ring-1 ring-primary/5">
+        <CardHeader className="p-4 pb-2 border-b border-border/40">
+          <CardTitle className="flex items-center justify-between gap-3 text-sm font-semibold">
+            <span className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-full bg-primary animate-pulse" />
+              Agent Live
+            </span>
+            <span className={cn('rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]', toneStyles[agentFeedback.tone])}>
+              {agentFeedback.tone}
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-4 space-y-3">
           <div className="grid grid-cols-3 gap-2">
             <div className={cn(
               'rounded-xl border px-3 py-2 transition-all duration-300',
-              planPulse ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-border/40 bg-background/60'
+              planPulse ? 'border-emerald-500/45 bg-emerald-500/12 shadow-sm shadow-emerald-500/20' : 'border-border/40 bg-background/60'
             )}>
               <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Plan</p>
               <p className="mt-1 text-xs font-semibold text-card-foreground">{status.plan}</p>
             </div>
             <div className={cn(
               'rounded-xl border px-3 py-2 transition-all duration-300',
-              tasksPulse ? 'border-blue-500/40 bg-blue-500/10' : 'border-border/40 bg-background/60'
+              tasksPulse ? 'border-blue-500/45 bg-blue-500/12 shadow-sm shadow-blue-500/20' : 'border-border/40 bg-background/60'
             )}>
               <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Tasks</p>
               <p className="mt-1 text-xs font-semibold text-card-foreground">{status.tasks}</p>
             </div>
             <div className={cn(
               'rounded-xl border px-3 py-2 transition-all duration-300',
-              focusPulse ? 'border-violet-500/40 bg-violet-500/10' : 'border-border/40 bg-background/60'
+              focusPulse ? 'border-violet-500/45 bg-violet-500/12 shadow-sm shadow-violet-500/20' : 'border-border/40 bg-background/60'
             )}>
               <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Focus</p>
               <p className="mt-1 text-xs font-semibold text-card-foreground">{status.focus}</p>
+            </div>
+          </div>
+
+          <div className={cn(
+            'rounded-2xl border px-4 py-3 transition-all duration-300',
+            feedbackPulse ? 'border-primary/40 bg-primary/10 shadow-md shadow-primary/10' : 'border-border/40 bg-background/55'
+          )}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Current Action</p>
+                <p className="mt-1 text-base font-semibold text-card-foreground">{currentActionLabel}</p>
+              </div>
+              <span className={cn('rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]', toneStyles[agentFeedback.tone])}>
+                Live
+              </span>
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
+              {currentActionDetail}
+            </p>
+          </div>
+
+          <div className={cn(
+            'rounded-2xl border px-4 py-3 transition-all duration-300',
+            feedbackPulse ? 'border-violet-500/40 bg-violet-500/10 shadow-md shadow-violet-500/10' : 'border-border/40 bg-background/55'
+          )}>
+            <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Next Step</p>
+            <p className="mt-1 text-sm font-semibold text-card-foreground leading-snug">{nextStepSuggestion}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Keep this as your immediate action.</p>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className={cn(
+              'rounded-xl border px-3 py-2 transition-all duration-300',
+              feedbackPulse ? 'border-primary/35 bg-primary/10' : 'border-border/40 bg-background/50'
+            )}>
+              <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Status</p>
+              <p className="mt-1 text-sm font-semibold text-card-foreground">{currentFocusTask ? 'Focus session running' : status.focus}</p>
+            </div>
+            <div className={cn(
+              'rounded-xl border px-3 py-2 transition-all duration-300',
+              feedbackPulse ? 'border-violet-500/35 bg-violet-500/10' : 'border-border/40 bg-background/50'
+            )}>
+              <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Reminder</p>
+              <p className="mt-1 text-sm font-semibold text-card-foreground">{currentFocusTask ? 'Stay on the active task' : 'Use chat to update your plan'}</p>
             </div>
           </div>
         </CardContent>

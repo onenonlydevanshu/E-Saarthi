@@ -97,6 +97,14 @@ export interface LearningMemory {
   recommendationHistory: string[]
 }
 
+export interface AgentFeedback {
+  currentAction: string
+  currentActionDetail: string
+  nextStep: string
+  tone: 'neutral' | 'encouraging' | 'reinforcing' | 'corrective'
+  updatedAt: string
+}
+
 interface AppState {
   // Theme
   theme: 'light' | 'dark'
@@ -117,6 +125,13 @@ interface AppState {
   updateLastMessage: (content: string) => void
   appendToLastMessage: (content: string) => void
   clearMessages: () => void
+  agentFeedback: AgentFeedback
+  setAgentFeedback: (feedback: {
+    currentAction?: string
+    currentActionDetail?: string
+    nextStep?: string
+    tone?: AgentFeedback['tone']
+  }) => void
 
   // Exams
   exams: Exam[]
@@ -226,6 +241,24 @@ export const useAppStore = create<AppState>()(
           ),
         })),
       clearMessages: () => set({ messages: [] }),
+      agentFeedback: {
+        currentAction: 'Waiting for input',
+        currentActionDetail: 'Ask for a plan, tasks, progress, or focus.',
+        nextStep: 'Start by telling me your goal for today.',
+        tone: 'neutral',
+        updatedAt: new Date().toISOString(),
+      },
+      setAgentFeedback: (feedback) =>
+        set((state) => ({
+          agentFeedback: {
+            currentAction: feedback.currentAction ?? state.agentFeedback.currentAction,
+            currentActionDetail:
+              feedback.currentActionDetail ?? state.agentFeedback.currentActionDetail,
+            nextStep: feedback.nextStep ?? state.agentFeedback.nextStep,
+            tone: feedback.tone ?? state.agentFeedback.tone,
+            updatedAt: new Date().toISOString(),
+          },
+        })),
 
       // Exams
       exams: [
@@ -558,6 +591,27 @@ export const useAppStore = create<AppState>()(
           recommendationHistory: state.learningMemory.recommendationHistory.slice(-10),
         }
       },
+      // Onboarding / user profile
+      onboardingCompleted: false,
+      userName: null,
+      targetExam: null,
+      studyHoursPerDay: 2,
+      setUserProfile: (profile) =>
+        set(() => ({
+          userName: profile?.userName ?? null,
+          targetExam: profile?.targetExam ?? null,
+          studyHoursPerDay: typeof profile?.studyHoursPerDay === 'number' ? profile.studyHoursPerDay : 2,
+        })),
+      setOnboardingCompleted: (v) => set({ onboardingCompleted: !!v }),
+      // Last suggestion tracking to avoid repetition
+      lastSuggestion: null,
+      setLastSuggestion: (payload) =>
+        set((state) => ({
+          // payload: { suggestion: string }
+          lastSuggestion: payload
+            ? { suggestion: payload.suggestion, updatedAt: new Date().toISOString() }
+            : null,
+        })),
     }),
     {
       name: 'exam-prep-storage',

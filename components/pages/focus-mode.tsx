@@ -163,6 +163,7 @@ export function FocusModePage() {
 
   const progress = 1 - timeLeft / timerSettings[mode].duration
   const circumference = 2 * Math.PI * 140
+  const activeSessionLabel = currentFocusTask ? 'Active Session' : 'No Active Session'
 
   return (
     <div className="min-h-[calc(100vh-8rem)] flex flex-col items-center justify-center p-4 animate-fade-in relative">
@@ -189,7 +190,7 @@ export function FocusModePage() {
 
         {/* Current Task Card */}
         {currentFocusTask ? (
-          <Card className="glass glass-dark border-primary/30 animate-fade-in-up">
+          <Card className="glass glass-dark border-primary/30 ring-1 ring-primary/10 shadow-lg shadow-primary/10 animate-fade-in-up">
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
@@ -197,8 +198,14 @@ export function FocusModePage() {
                     <BookOpen className="w-6 h-6 text-primary" />
                   </div>
                   <div>
-                    <p className="text-xs text-muted-foreground font-medium mb-1">Currently Studying</p>
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="text-xs text-muted-foreground font-medium">Currently Studying</p>
+                      <span className="inline-flex items-center rounded-full border border-violet-500/25 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-600">
+                        {activeSessionLabel}
+                      </span>
+                    </div>
                     <p className="text-lg font-semibold text-card-foreground">{currentFocusTask.title}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Session started from chat and updates live below.</p>
                   </div>
                 </div>
                 <Button
@@ -247,6 +254,14 @@ export function FocusModePage() {
               </p>
             </CardContent>
           </Card>
+        ) : (
+          <Card className="glass glass-dark border-dashed border-border/50 animate-fade-in-up">
+            <CardContent className="p-5 text-center space-y-2">
+              <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Focus Session</p>
+              <p className="text-sm font-semibold text-card-foreground">No active session yet</p>
+              <p className="text-xs text-muted-foreground">Pick a task from chat or add one to start focus.</p>
+            </CardContent>
+          </Card>
         ) : null}
 
         {/* Mode Selector */}
@@ -278,6 +293,12 @@ export function FocusModePage() {
           timerSettings[mode].bgColor
         )}>
           <CardContent className="p-8 sm:p-12">
+            <div className="mb-6 flex items-center justify-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">
+                <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+                {activeSessionLabel}
+              </span>
+            </div>
             <div className="relative flex items-center justify-center">
               {/* Progress Circle */}
               <svg className="w-72 h-72 sm:w-80 sm:h-80 transform -rotate-90">

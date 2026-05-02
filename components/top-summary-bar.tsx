@@ -5,11 +5,14 @@ import { cn } from '@/lib/utils'
 import { Flame, Clock, CheckCircle2, Target, TrendingUp, Sparkles } from 'lucide-react'
 
 export function TopSummaryBar() {
-  const { studyStreak, totalStudyHours, tasks, focusSessionsCompleted, getPerformanceData } = useAppStore()
+  const { studyStreak, totalStudyHours, tasks, focusSessionsCompleted, getPerformanceData, studyHoursPerDay } = useAppStore()
   
   const completedTasks = tasks.filter((t) => t.completed).length
   const totalTasks = tasks.length
   const performanceData = getPerformanceData()
+  
+  // Calculate today's study hours (for demo purposes, using 0 as starting point)
+  const todayHours = 0
 
   const summaryItems = [
     {
@@ -23,8 +26,8 @@ export function TopSummaryBar() {
     },
     {
       icon: Clock,
-      value: `${totalStudyHours}h`,
-      label: 'Studied',
+      value: `${todayHours}/${studyHoursPerDay}h`,
+      label: 'Studied Today',
       color: 'text-blue-500',
       bgColor: 'bg-blue-500/10',
       borderColor: 'border-blue-500/20',

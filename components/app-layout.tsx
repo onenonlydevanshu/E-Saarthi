@@ -1,141 +1,104 @@
 'use client'
 
-import { memo, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { LayoutDashboard, Sparkles, ArrowLeft } from 'lucide-react'
 import { useAppStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
-import { Sidebar } from '@/components/sidebar'
-import { ChatPanel } from '@/components/chat-panel'
-import { RightPanel } from '@/components/right-panel'
-import { TopSummaryBar } from '@/components/top-summary-bar'
-import { Menu, GraduationCap, Sparkles, MessageSquare, LayoutPanelLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-
-// Memoized Mobile Header component
-const MobileHeader = memo(function MobileHeader({ 
-  onToggleSidebar 
-}: { 
-  onToggleSidebar: () => void 
-}) {
-  return (
-    <header className={cn(
-      'lg:hidden fixed top-0 left-0 right-0 z-30',
-      'h-16 bg-background/80 backdrop-blur-2xl',
-      'border-b border-border/50',
-      'flex items-center gap-4 px-4',
-      'shadow-[0_1px_3px_rgba(0,0,0,0.02)]'
-    )}>
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={onToggleSidebar}
-        className="rounded-xl"
-        aria-label="Toggle sidebar"
-      >
-        <Menu className="w-5 h-5" />
-      </Button>
-      <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-primary/80 text-primary-foreground shadow-md shadow-primary/20">
-          <GraduationCap className="w-5 h-5" />
-        </div>
-        <div>
-          <h1 className="font-bold text-foreground">ExamPrep AI</h1>
-        </div>
-      </div>
-    </header>
-  )
-})
+import { DashboardPage } from '@/components/pages/dashboard'
+import { ChatPanel } from '@/components/agent-chat'
+import Onboarding from '@/components/onboarding'
 
 export function AppLayout() {
-  const { sidebarOpen, setSidebarOpen } = useAppStore()
-  const [mobileView, setMobileView] = useState<'chat' | 'panels'>('chat')
+  const { chatOpen, setChatOpen, exams, onboardingCompleted, userName, selectedExamId, studyHoursPerDay } = useAppStore()
+  const [activeView, setActiveView] = useState<'chat' | 'dashboard'>('chat')
+  const [mounted, setMounted] = useState(false)
 
-  const handleToggleSidebar = () => setSidebarOpen(!sidebarOpen)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  // Get exam name from selectedExamId
+  const selectedExamName = selectedExamId ? exams.find(e => e.id === selectedExamId)?.name : null
+
+  useEffect(() => {
+    setChatOpen(activeView === 'dashboard')
+  }, [activeView, setChatOpen])
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Mobile Header */}
-      <MobileHeader onToggleSidebar={handleToggleSidebar} />
+    <div className="min-h-screen overflow-x-hidden bg-background">
+      {mounted && !onboardingCompleted && <Onboarding isOpen={true} />}
 
-      {/* Mobile Sidebar Overlay */}
-      {sidebarOpen && (
-        <div
-          className="lg:hidden fixed inset-0 z-30 bg-background/60 backdrop-blur-sm transition-opacity duration-300"
-          onClick={() => setSidebarOpen(false)}
-          role="button"
-          tabIndex={0}
-          aria-label="Close sidebar"
-          onKeyDown={(e) => e.key === 'Enter' && setSidebarOpen(false)}
-        />
-      )}
-
-      {/* Sidebar */}
-      <div
-        className={cn(
-          'lg:block transition-all duration-300',
-          sidebarOpen ? 'block' : 'hidden lg:block'
-        )}
-      >
-        <Sidebar />
-      </div>
-
-      {/* Main Content */}
-      <main
-        className={cn(
-          'min-h-screen transition-all duration-400 ease-out',
-          'pt-16 lg:pt-0',
-          sidebarOpen ? 'lg:ml-[220px]' : 'lg:ml-[76px]'
-        )}
-      >
-        <div className="p-4 sm:p-6 lg:p-8 xl:p-10 max-w-[1800px] mx-auto space-y-6">
-          <TopSummaryBar />
-
-          <div className="lg:hidden flex items-center gap-2 rounded-2xl border border-border/50 bg-card/85 p-1">
-            <Button
-              variant={mobileView === 'chat' ? 'default' : 'ghost'}
-              onClick={() => setMobileView('chat')}
-              className="flex-1 rounded-xl gap-2"
-            >
-              <MessageSquare className="w-4 h-4" />
-              Chat
-            </Button>
-            <Button
-              variant={mobileView === 'panels' ? 'default' : 'ghost'}
-              onClick={() => setMobileView('panels')}
-              className="flex-1 rounded-xl gap-2"
-            >
-              <LayoutPanelLeft className="w-4 h-4" />
-              Panels
-            </Button>
-          </div>
-
-          <section className="space-y-6 xl:grid xl:grid-cols-[minmax(0,1.9fr)_minmax(360px,1fr)] xl:gap-6 items-start">
-            <div className={cn('space-y-4', mobileView === 'panels' ? 'hidden xl:block' : 'block xl:block')}>
-              <div className="flex items-center gap-3 px-1">
-                <div className="flex items-center justify-center w-10 h-10 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 border border-primary/20">
-                  <Sparkles className="w-5 h-5 text-primary" />
+      {activeView === 'chat' ? (
+        <main className="relative min-h-screen overflow-hidden px-4 py-4 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(var(--primary),0.12),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(var(--primary),0.08),transparent_28%)]" />
+          <div className="relative mx-auto flex min-h-[calc(100dvh-2rem)] w-full max-w-6xl flex-col justify-center">
+            <div className="mb-4 flex items-center justify-between gap-3 px-1 sm:px-2">
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-primary/80 text-primary-foreground shadow-lg shadow-primary/20">
+                  <Sparkles className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground font-semibold">
-                    Central Controller
-                  </p>
-                  <h2 className="text-xl font-bold text-foreground">
-                    AI Exam Coach
-                  </h2>
-                  <p className="text-sm text-muted-foreground">
-                    Chat drives plans, tasks, focus, and progress.
-                  </p>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Agent First</p>
+                  <h1 className="text-sm font-semibold text-foreground sm:text-base">E-Saarthi</h1>
                 </div>
               </div>
-
-              <ChatPanel embedded />
+              <div className="flex items-center gap-3">
+                {onboardingCompleted && selectedExamName && (
+                  <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-500/10 text-blue-400 text-sm font-medium border border-blue-500/20">
+                    <span>🎯</span>
+                    <span>Target: {selectedExamName}</span>
+                  </div>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setActiveView('dashboard')}
+                  className="gap-2 rounded-xl"
+                >
+                  <LayoutDashboard className="h-4 w-4" />
+                  Open Dashboard
+                </Button>
+              </div>
             </div>
 
-            <div className={cn('space-y-4', mobileView === 'chat' ? 'hidden xl:block' : 'block xl:block')}>
-              <RightPanel />
+            <ChatPanel
+              mode="hero"
+              onOpenDashboard={() => setActiveView('dashboard')}
+            />
+          </div>
+        </main>
+      ) : (
+        <main className="relative min-h-screen overflow-hidden">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(var(--primary),0.1),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(var(--primary),0.06),transparent_30%)]" />
+          <div className="relative mx-auto w-full max-w-[1600px] px-4 py-4 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setActiveView('chat')}
+                className="gap-2 rounded-xl"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Back to Chat
+              </Button>
+              <div className="hidden sm:flex items-center gap-2 rounded-full border border-border/50 bg-card/80 px-4 py-2 text-xs text-muted-foreground shadow-sm backdrop-blur-md">
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
+                Agentic dashboard view is live
+              </div>
             </div>
-          </section>
-        </div>
-      </main>
+
+            <DashboardPage />
+          </div>
+
+          <div className="fixed inset-x-4 bottom-4 z-30 hidden lg:block lg:inset-y-4 lg:right-4 lg:left-auto lg:w-[420px]">
+            <ChatPanel
+              mode="dock"
+              onOpenDashboard={() => setActiveView('dashboard')}
+            />
+          </div>
+        </main>
+      )}
     </div>
   )
 }

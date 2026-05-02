@@ -34,6 +34,9 @@ export function StudyPlannerPage() {
   const [hoursPerDay, setHoursPerDay] = useState('4')
   const [isGenerating, setIsGenerating] = useState(false)
   const [dismissedFreshId, setDismissedFreshId] = useState<string | null>(null)
+  const [hasMounted, setHasMounted] = useState(false)
+  const [freshPlanId, setFreshPlanId] = useState<string | null>(null)
+  const [todayIso, setTodayIso] = useState('')
 
   // Track which plan IDs are currently mounted so we can detect new ones
   // arriving from the AI agent and trigger highlight + scroll behavior.
@@ -41,20 +44,33 @@ export function StudyPlannerPage() {
   const planRefs = useRef<Map<string, HTMLDivElement | null>>(new Map())
   const [highlightedPlanId, setHighlightedPlanId] = useState<string | null>(null)
 
-  // The plan most recently added (by createdAt). If it was created within
-  // FRESH_PLAN_WINDOW_MS, we surface a "Just added by AI" banner.
   const freshPlan = useMemo(() => {
-    if (studyPlans.length === 0) return null
+    if (!freshPlanId) return null
+    return studyPlans.find((plan) => plan.id === freshPlanId) ?? null
+  }, [studyPlans, freshPlanId])
+
+  useEffect(() => {
+    setHasMounted(true)
+    setTodayIso(new Date().toISOString().split('T')[0])
+  }, [])
+
+  useEffect(() => {
+    if (!hasMounted || studyPlans.length === 0) return
+
     const sorted = [...studyPlans].sort(
       (a, b) =>
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     )
     const latest = sorted[0]
-    const ageMs = Date.now() - new Date(latest.createdAt).getTime()
-    if (ageMs > FRESH_PLAN_WINDOW_MS) return null
-    if (latest.id === dismissedFreshId) return null
-    return latest
-  }, [studyPlans, dismissedFreshId])
+    const ageMs = new Date().getTime() - new Date(latest.createdAt).getTime()
+
+    if (ageMs <= FRESH_PLAN_WINDOW_MS && latest.id !== dismissedFreshId) {
+      setFreshPlanId(latest.id)
+      return
+    }
+
+    setFreshPlanId(null)
+  }, [hasMounted, studyPlans, dismissedFreshId])
 
   // When a brand-new plan appears (e.g. AI added one), highlight it and
   // scroll it into view automatically.
@@ -221,7 +237,7 @@ export function StudyPlannerPage() {
                 value={examDate}
                 onChange={(e) => setExamDate(e.target.value)}
                 className="h-12 rounded-xl input-premium"
-                min={format(new Date(), 'yyyy-MM-dd')}
+                min={todayIso || format(new Date(), 'yyyy-MM-dd')}
               />
             </div>
             <div className="space-y-2">
